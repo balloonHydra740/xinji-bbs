@@ -1,0 +1,96 @@
+<!DOCTYPE html><html lang="zh-CN" data-palette="violet"><head><meta charset="utf-8">
+<link rel="stylesheet" href="../../public/style.css"><style>
+/* ---- fixture 专用：把 dialog 摊平成静态块，方便一次性截图与审计 ---- */
+dialog{position:static;display:block;margin:16px 20px;width:auto;max-width:640px;box-shadow:none;border:1px solid var(--line);max-height:none}
+dialog::backdrop{display:none}
+dialog>.dlgBody{max-height:none;overflow:visible}
+#toast{transform:translate(-50%,0)}
+
+/* 关键：无头渲染里动画会停在 0%（.hero>div 这类入场动画的首帧就是 opacity:0），
+   getComputedStyle 于是把每个元素都算成全透明，整页配色都测成 1:1。
+   审计要的是「动画跑完之后的稳定态」，所以这里直接关掉动画与过渡。
+   注意只关动画，不动静态的 opacity 声明（比如 #toast 的 opacity:0 是真实状态）。 */
+*,*::before,*::after{animation:none!important;transition:none!important}
+
+body{background:#fff;margin:0;font-family:system-ui,sans-serif;color:#16203a}
+dialog{margin:0 auto;max-width:480px;border:0}
+</style></head><body><dialog id="settingsDialog">
+  <div class="dialogHead"><h2>账户设置</h2><button class="x" type="button" onclick="settingsDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody">
+    <section class="setCard">
+      <h3>外观</h3>
+      <p class="muted">配色只保存在这台设备上，换设备不会跟着走。</p>
+      <div id="palettePicker" class="palettePicker"></div>
+      <div class="segRow" id="themeSeg"></div>
+    </section>
+
+    <section class="setCard">
+      <h3>个人资料</h3>
+      <p class="muted">头像和签名档会显示在你的帖子和回复旁边，方便大家认出你。</p>
+      <form id="profileForm">
+        <div class="avaRow">
+          <div id="avaPreview"></div>
+          <div class="avaPickWrap">
+            <div id="avaPicker" class="avaPicker"></div>
+            <div class="btnPair">
+              <input type="file" id="avaFile" class="fileHidden" accept="image/*" onchange="uploadAvatar()">
+              <label class="mini uploadBtn" for="avaFile">上传图片</label>
+              <button class="mini" type="button" id="avaClearWrap" onclick="clearAvatar()">清除</button>
+            </div>
+            <p class="muted hidden" id="avaMsg"></p>
+          </div>
+        </div>
+        <label>签名档<textarea id="bioInput" maxlength="140" placeholder="一句话介绍自己，或写一句喜欢的话"></textarea></label>
+        <button class="primary wide">保存资料</button>
+      </form>
+    </section>
+
+    <section class="setCard">
+      <h3>修改用户名</h3>
+      <form id="renameForm">
+        <label>新用户名<input id="renameUser" required maxlength="24" autocomplete="username"></label>
+        <label>当前密码<input id="renamePass" type="password" required autocomplete="current-password"></label>
+        <div id="renameCodeWrap" class="hidden">
+          <label>两步验证码<input id="renameCode" inputmode="numeric" maxlength="6" placeholder="6 位数字"></label>
+        </div>
+        <button class="primary wide">保存用户名</button>
+      </form>
+    </section>
+
+    <section class="setCard">
+      <h3>修改密码</h3>
+      <form id="repassForm">
+        <label>当前密码<input id="repassOld" type="password" required autocomplete="current-password"></label>
+        <label>新密码<input id="repassNew" type="password" required minlength="8" placeholder="至少 8 位"></label>
+        <div id="repassCodeWrap" class="hidden">
+          <label>两步验证码<input id="repassCode" inputmode="numeric" maxlength="6" placeholder="6 位数字"></label>
+        </div>
+        <button class="primary wide">修改密码</button>
+      </form>
+    </section>
+
+    <section class="setCard">
+      <h3>两步验证 (2FA)</h3>
+      <p class="muted" id="tfaState">状态读取中…</p>
+      <button class="ghost wide hidden" id="tfaOnBtn" type="button">开启两步验证</button>
+      <form id="tfaOffForm" class="hidden">
+        <label>当前密码<input id="tfaOffPass" type="password" required autocomplete="current-password"></label>
+        <label>两步验证码<input id="tfaOffCode" inputmode="numeric" maxlength="6" required placeholder="6 位数字"></label>
+        <button class="ghost wide">关闭两步验证</button>
+      </form>
+    </section>
+
+    <section class="setCard danger" id="delZone">
+      <h3>注销账号</h3>
+      <p class="muted" id="delNotice">将永久删除你的账号、所有主题与回复，此操作无法撤销。</p>
+      <form id="delForm">
+        <label>当前密码<input id="delPass" type="password" required autocomplete="current-password"></label>
+        <div id="delCodeWrap" class="hidden">
+          <label>两步验证码<input id="delCode" inputmode="numeric" maxlength="6" placeholder="6 位数字"></label>
+        </div>
+        <label>输入你的用户名以确认<input id="delConfirm" required placeholder="你的用户名"></label>
+        <button class="danger wide">永久注销</button>
+      </form>
+    </section>
+  </div>
+</dialog></body></html>

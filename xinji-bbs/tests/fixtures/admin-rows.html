@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-palette="violet">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../../public/style.css">
+<style>
+/* 动画会停在首帧，布局要测的是稳定态 */
+*,*::before,*::after{animation:none!important;transition:none!important}
+body{margin:0;padding:12px;background:#fff}
+.wrap{margin:0 0 18px}
+.wrap>h4{margin:0 0 6px;font:12px/1.4 sans-serif;color:#888}
+</style>
+</head>
+<body>
+
+<!-- 真实结构照抄 app.js 的管理中心：宽窄两档都要能扛。
+     历史上翻过的车：
+       · 中文没有词边界 ⇒ 按钮被压到一个字宽，竖着排；
+       · 用户名长短不一 ⇒ 每行按钮起始位置参差不齐；
+       · 长 URL / 长板块说明 ⇒ 整行横向溢出。
+     这三条现在都由 .row 的 grid（1fr + auto）+ 容器查询兜住。 -->
+<template id="tpl">
+  <div class="adminCard full">
+    <h3>用户</h3>
+    <p class="adminNote">点头像或用户名可以直接打开 TA 的主页。</p>
+    <!-- 最长的一组按钮：子管理员那一行 -->
+    <div class="row">
+      <span class="rowMain">
+        <span class="avaLink"><span class="ava avaText">S</span></span>
+        <span class="uName"><b class="linkName">someone</b><span class="uTags"><span class="tag mute">子管理员</span><span class="tag warn">已封禁</span><span class="tag mute">2FA</span></span></span>
+      </span>
+      <span class="rowActions"><button class="mini">撤销子管理员</button><button class="mini">关闭2FA</button><button class="mini">改密</button><button class="mini">解封</button><button class="mini danger">删号</button></span>
+    </div>
+    <!-- 短名字：按钮组必须和上面那行右对齐，不能因为名字短就整体左移 -->
+    <div class="row">
+      <span class="rowMain">
+        <span class="avaLink"><span class="ava avaText">M</span></span>
+        <span class="uName"><b class="linkName">mj</b><span class="uTags"><span class="tag mute">普通用户</span></span></span>
+      </span>
+      <span class="rowActions"><button class="mini">设为子管理员</button><button class="mini">改密</button><button class="mini">封禁</button><button class="mini danger">删号</button></span>
+    </div>
+    <!-- 超长名字：只能省略号，不许把按钮挤走 -->
+    <div class="row">
+      <span class="rowMain">
+        <span class="avaLink"><span class="ava avaText">全</span></span>
+        <span class="uName"><b class="linkName">全世界最有实力的人一个名字能有多长</b><span class="uTags"><span class="tag mute">普通用户</span></span></span>
+      </span>
+      <span class="rowActions"><button class="mini">设为子管理员</button><button class="mini">改密</button><button class="mini">封禁</button><button class="mini danger">删号</button></span>
+    </div>
+    <!-- 管理员自己：操作区是空的，名字依然要右对齐留白 -->
+    <div class="row">
+      <span class="rowMain">
+        <span class="avaLink"><span class="ava avaText">R</span></span>
+        <span class="uName"><b class="linkName">rongrong</b><span class="uTags"><span class="tag">管理员</span><span class="tag mute">我自己</span></span></span>
+      </span>
+      <span class="rowActions"></span>
+    </div>
+  </div>
+
+  <div class="adminCard">
+    <h3>最近内容</h3>
+    <div class="row"><span class="rowText"><span class="linkName">一个主题</span> · <span class="muted">荣荣：这是一段很长很长的正文摘要，用来把左边那一栏撑满，看右边的删除按钮会不会被挤成两行</span></span><span class="rowActions"><button class="mini danger">删除</button></span></div>
+    <div class="row"><span class="rowText"><span class="linkName">另一个主题</span> · <span class="muted">小铃：短一点的内容</span></span><span class="rowActions"><button class="mini danger">删除</button></span></div>
+    <div class="row"><span class="rowText">https://example.com/a-very-long-unbreakable-url-that-should-not-blow-out-the-row</span><span class="rowActions"><button class="mini danger">删除</button></span></div>
+  </div>
+
+  <div class="adminCard">
+    <h3>主题管理</h3>
+    <div class="row"><span class="rowText"><span class="tag">置顶</span><span class="tag mute">已锁</span><span class="linkName">一个被置顶又锁定的主题标题，写长一点看看挤不挤</span></span><span class="rowActions"><button class="mini">置顶</button><button class="mini">锁定</button><button class="mini danger">删帖</button></span></div>
+    <div class="row"><span class="rowText"><span class="linkName">短标题</span></span><span class="rowActions"><button class="mini">置顶</button><button class="mini">锁定</button><button class="mini danger">删帖</button></span></div>
+  </div>
+
+  <div class="adminCard">
+    <h3>板块管理</h3>
+    <div class="row"><span class="rowText"><span class="linkName">技术</span><span class="muted"> · 3 帖 · 这里放一句比较长的板块说明文字 · 由 荣荣 创建</span></span><span class="rowActions"><button class="mini danger">删除板块</button></span></div>
+    <div class="row"><span class="rowText"><span class="linkName">闲聊</span><span class="muted"> · 7 帖 · 由 小铃 创建</span></span><span class="rowActions"><button class="mini danger">删除板块</button></span></div>
+  </div>
+</template>
+
+<div id="root"></div>
+
+<script>
+// 不同宽度各来一份：管理中心是多列自适应网格，窄屏单列，
+// 中间还有一段尴尬区间 —— 所以要用容器查询而不是视口查询。
+var WIDTHS = [280, 340, 420, 560, 744];
+var root = document.getElementById('root'), tpl = document.getElementById('tpl');
+WIDTHS.forEach(function (w) {
+  var box = document.createElement('div');
+  box.className = 'wrap';
+  box.style.width = w + 'px';
+  var h = document.createElement('h4');
+  h.textContent = '容器宽度 ' + w + 'px';
+  box.appendChild(h);
+  box.appendChild(tpl.content.cloneNode(true));
+  root.appendChild(box);
+});
+
+// 量一个元素里文字占了几行
+function lineCount(el) {
+  var r = document.createRange();
+  r.selectNodeContents(el);
+  var tops = {};
+  Array.prototype.forEach.call(r.getClientRects(), function (x) {
+    if (x.width > 0 && x.height > 0) tops[Math.round(x.top)] = 1;
+  });
+  return Object.keys(tops).length;
+}
+
+var out = [], boxes = document.querySelectorAll('.wrap');
+boxes.forEach(function (box) {
+  var width = box.style.width;
+  // 1) 按钮自身不许换行，也不许被压得比内容还窄
+  box.querySelectorAll('.mini').forEach(function (b) {
+    var lines = lineCount(b);
+    out.push({
+      kind: 'button', width: width, text: b.textContent.trim(), lines: lines,
+      squashed: b.scrollWidth > b.clientWidth + 1,
+      w: Math.round(b.getBoundingClientRect().width),
+      pass: lines <= 1 && !(b.scrollWidth > b.clientWidth + 1)
+    });
+  });
+  // 2) 整行不许横向溢出
+  box.querySelectorAll('.row').forEach(function (row) {
+    out.push({
+      kind: 'row', width: width, text: row.textContent.trim().slice(0, 24),
+      pass: row.scrollWidth <= row.clientWidth + 1
+    });
+  });
+  // 3) 【这一版的核心诉求】按钮组不许被「多占地方的名字栏」挤到折行。
+  //    截图里「删号」独自掉到第三行的根因是：.rowActions 写成了 flex:0 1 auto
+  //    + min-width:0，于是它和名字栏一起参与 flex 收缩 —— 名字越长，
+  //    按钮组被压得越窄，里面的按钮就自己折行（每行折的位置还不一样）。
+  //
+  //    判定办法：量出左边那一栏的 min-content（它"至少要这么宽"），
+  //    再对比它实际占了多宽。按钮组折行了、而左边那一栏还占着远超 min-content
+  //    的宽度 ⇒ 空间是被名字栏多占走的 ⇒ 不合格。
+  //    窄屏时左边那一栏会被压到 0（min-width:0），按钮组折行是合理的，豁免。
+  box.querySelectorAll('.row').forEach(function (row) {
+    var acts = row.querySelector('.rowActions');
+    var main = row.children[0];
+    if (!acts || !acts.children.length || !main) return;
+    var tops = {};
+    Array.prototype.forEach.call(acts.children, function (b) {
+      var r = b.getBoundingClientRect();
+      if (r.height > 0) tops[Math.round(r.top)] = 1;
+    });
+    var lines = Object.keys(tops).length;
+    if (lines <= 1) return;                       // 一行放得下，没话说
+    var probe = main.cloneNode(true);
+    probe.style.position = 'absolute';
+    probe.style.width = 'min-content';
+    probe.style.visibility = 'hidden';
+    row.appendChild(probe);
+    var minMain = probe.getBoundingClientRect().width;
+    probe.remove();
+    var used = main.getBoundingClientRect().width;
+    out.push({
+      kind: 'actline', width: width, text: acts.textContent.trim().slice(0, 18), lines: lines,
+      pass: used <= minMain + 2
+    });
+  });
+  // 4) 同一条线上的按钮组必须右对齐（用户名长短不该影响按钮位置）
+  var rights = {};
+  box.querySelectorAll('.row').forEach(function (row) {
+    var acts = row.querySelector('.rowActions');
+    if (!acts || acts.children.length < 2) return;   // 空操作区 / 单按钮行不算
+    var rr = row.getBoundingClientRect(), ar = acts.getBoundingClientRect();
+    if (ar.width < 1) return;
+    if (ar.top - rr.top > 4) return;                 // 已换行到第二行
+    rights[Math.round(ar.right)] = 1;
+  });
+  var keys = Object.keys(rights);
+  out.push({
+    kind: 'align', width: width, text: '按钮组右边缘', lines: keys.length,
+    pass: keys.length <= 1
+  });
+  // 5) 卡片整体不许溢出
+  box.querySelectorAll('.adminCard').forEach(function (card) {
+    out.push({ kind: 'card', width: width, text: '卡片整体',
+      pass: card.scrollWidth <= card.clientWidth + 1 });
+  });
+});
+
+var tag = document.createElement('script');
+tag.id = '__layout'; tag.type = 'application/json';
+tag.textContent = JSON.stringify({ total: out.length, items: out });
+document.body.appendChild(tag);
+</script>
+</body>
+</html>

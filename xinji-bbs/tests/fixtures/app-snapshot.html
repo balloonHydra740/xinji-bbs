@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f4f6fb">
+<title>星铃 BBS</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Crect%20width=%2264%22%20height=%2264%22%20rx=%2214%22%20fill=%22%230f172a%22/%3E%3Ctext%20x=%2232%22%20y=%2245%22%20font-size=%2240%22%20text-anchor=%22middle%22%20fill=%22%23fff%22%20font-family=%22sans-serif%22%3E%E6%98%9F%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+<script>
+/* 主题与配色必须在样式生效前就定好，否则首屏会闪一下默认色。
+   bbs_theme：light / dark / auto（老版本只写过 light|dark，这里兼容）。
+   bbs_palette：violet / ocean / mint / sunset / rose / slate。 */
+try{
+  var _m=localStorage.getItem('bbs_theme')||'auto';
+  var _dark=_m==='dark'||(_m!=='light'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);
+  var _p=localStorage.getItem('bbs_palette')||'violet';
+  var _r=document.documentElement;
+  _r.setAttribute('data-theme',_dark?'dark':'light');
+  _r.setAttribute('data-palette',_p);
+}catch(e){}
+</script>
+
+<link rel="stylesheet" href="../../public/style.css">
+</head>
+<body>
+<div class="bg"></div>
+<header>
+  <div class="hLeft">
+    <!-- 左上角导航菜单：板块列表 + 外观都收在里面。
+         以前板块是横着一排胶囊，板块一多就换行成两三排，首屏被占掉一大块；
+         顶栏那颗深浅切换也一并收进来（三档比「盲翻」清楚）。
+         图标是三个 <i> 而不是 SVG <line>：WebKit 对 SVG 子元素的 CSS transform
+         （transform-box / transform-origin 那套）历史上一路有 bug，
+         用普通行内块 + 绝对定位在任何内核表现都一样。 -->
+    <button id="navBtn" class="iconBtn navBtn" type="button" onclick="toggleNav(event)"
+            aria-haspopup="dialog" aria-controls="navDrawer" aria-expanded="false"
+            title="导航菜单" aria-label="打开导航菜单">
+      <span class="navIco" aria-hidden="true"><i></i><i></i><i></i></span>
+    </button>
+    <div class="brand">
+      <span class="logo">星</span>
+      <span class="brandText"><b>星铃</b><small>一个自由的讨论社区</small></span>
+    </div>
+  </div>
+  <div class="navActions">
+    <button id="newBtn" class="primary hidden">＋ 发帖</button>
+    <button id="loginBtn" class="ghost">登录</button>
+    <button id="userBtn" class="userBtn hidden" type="button" onclick="toggleUserMenu(event)" aria-haspopup="menu" aria-expanded="false">
+      <span id="meAva" class="ava avaMini"></span><b id="me">游客</b><span class="caret">▾</span>
+    </button>
+    <div id="userMenu" class="userMenu hidden" role="menu">
+      <button type="button" role="menuitem" id="profileBtn">我的主页</button>
+      <button type="button" role="menuitem" id="adminBtn" class="hidden">管理中心</button>
+      <button type="button" role="menuitem" id="settingsBtn" class="hidden">账户设置</button>
+      <!-- 回收站对所有登录用户开放：自己删掉的东西自己就能捞回来。
+          管理员点进去则看到全站被删的内容（后端按身份决定能看到多少）。 -->
+      <button type="button" role="menuitem" id="trashBtn" class="hidden">回收站</button>
+      <span class="menuSep"></span>
+      <button type="button" role="menuitem" id="logoutBtn" class="danger hidden">退出登录</button>
+    </div>
+  </div>
+</header>
+<main>
+  <section class="hero">
+    <div>
+      <span class="pill" id="heroPill">自由讨论 · BBS</span>
+      <h1 id="heroTitle">说点什么，留下你的痕迹。</h1>
+      <p id="heroDesc">这里是一个自由的讨论社区。可以发帖、回复，也可以带上图片和视频。</p>
+    </div>
+    <div class="stats"><b id="threadCount">—</b><small>个主题</small></div>
+  </section>
+  <section id="boardBar" class="boardBar hidden"></section>
+  <section id="app"></section>
+</main>
+
+<!-- 导航抽屉：常驻 DOM，靠 .open 类进出场（这样才有动画；
+     用 .hidden 直接 display:none 是没法过渡的）。
+     内容由 renderNav() 填，跟板块数据同源。 -->
+<div id="navMask" class="navMask" onclick="closeNav()"></div>
+<aside id="navDrawer" class="navDrawer" role="dialog" aria-modal="true" aria-label="站内导航" aria-hidden="true">
+  <div class="navDrawerHead">
+    <span class="navDrawerTitle">导航</span>
+    <button class="x" type="button" onclick="closeNav()" aria-label="关闭导航">×</button>
+  </div>
+  <div class="navDrawerBody" id="navBody"></div>
+</aside>
+
+<dialog id="authDialog">
+  <div class="dialogHead"><h2 id="authTitle">登录</h2><button class="x" type="button" onclick="authDialog.close()" aria-label="关闭">×</button></div>
+  <form id="authForm" class="dlgBody">
+    <label>用户名<input id="authUser" required maxlength="24" autocomplete="username"></label>
+    <label>密码<input id="authPass" required type="password" autocomplete="current-password"></label>
+    <button class="primary wide">继续</button>
+    <p class="switch" id="switchAuth">没有账号？<a href="#">注册</a></p>
+  </form>
+</dialog>
+
+<dialog id="setupDialog">
+  <div class="dialogHead"><h2>首次初始化</h2></div>
+  <form id="setupForm" class="dlgBody">
+    <p class="muted">创建第一个管理员账号。管理员可以管理用户、删除内容、置顶和锁定主题。</p>
+    <label>管理员用户名<input id="setupUser" required maxlength="24"></label>
+    <label>管理员密码<input id="setupPass" required type="password" minlength="10"></label>
+    <button class="primary wide">创建管理员</button>
+  </form>
+</dialog>
+
+<dialog id="postDialog">
+  <div class="dialogHead"><h2>发表主题</h2><button class="x" type="button" onclick="postDialog.close()" aria-label="关闭">×</button></div>
+  <form id="postForm" class="dlgBody">
+    <label>标题<input id="postTitle" maxlength="100" required placeholder="一个简短的标题"></label>
+    <div class="field">
+      <label>正文<textarea id="postBody" maxlength="10000" required placeholder="写下你想说的话……"></textarea></label>
+      <div class="mdBar" id="postMdBar" data-ta="#postBody" data-file="#postFile" data-prev="#postMdPreview"></div>
+      <input type="file" id="postFile" class="fileHidden" accept="image/*,video/*,audio/*" multiple onchange="uploadInto('#postFile','#postBody')">
+      <div class="progress hidden"><i></i></div>
+      <div class="upRow hidden"><span class="upTip muted"></span><button class="mini" type="button" onclick="cancelUpload()">取消</button></div>
+      <div class="mdPreview postBody hidden" id="postMdPreview"></div>
+      <div class="fieldHint"><span>点上面的按钮就能加格式，不用背 Markdown</span><span id="postDraftTip"></span></div>
+    </div>
+    <label>板块<select id="postBoard"><option value="">未分类</option></select></label>
+    <div class="pollCompose">
+      <div class="hrRow">
+        <button class="mini" type="button" id="postPollBtn" onclick="openPollDialog()">＋ 插入投票</button>
+        <span class="muted">每个账号只能投一次</span>
+      </div>
+      <div id="postPollChip"></div>
+    </div>
+    <label class="checkRow"><input type="checkbox" id="postSensitive"> 标记为「不易展示」（剧透 / 公共场合不宜）</label>
+    <p class="muted">勾上之后，开了「内容限制」的人会先看到一层模糊，需要滑动确认才能读完整内容。</p>
+    <button class="primary wide">发布</button>
+  </form>
+</dialog>
+
+<dialog id="settingsDialog">
+  <div class="dialogHead"><h2>账户设置</h2><button class="x" type="button" onclick="settingsDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody">
+    <section class="setCard">
+      <h3>外观</h3>
+      <p class="muted">配色只保存在这台设备上，换设备不会跟着走。</p>
+      <div id="palettePicker" class="palettePicker"></div>
+      <div class="segRow" id="themeSeg"></div>
+    </section>
+
+    <section class="setCard">
+      <h3>内容限制</h3>
+      <p class="muted">被作者或管理员标记为「不易展示」的内容（剧透、公共场合不宜）会先模糊掉，滑动确认之后才显示完整内容。</p>
+      <label class="checkRow"><input type="checkbox" id="sensitiveFilter" onchange="saveSensitiveFilter(this.checked)"> 对这类内容先模糊</label>
+      <p class="muted">这颗开关只影响你自己看到的画面，不会改动别人的帖子；关掉后这类内容就和普通帖子一样直接显示。</p>
+    </section>
+
+    <section class="setCard">
+      <h3>个人资料</h3>
+      <p class="muted">头像和签名档会显示在你的帖子和回复旁边，方便大家认出你。</p>
+      <form id="profileForm">
+        <div class="avaRow">
+          <div id="avaPreview"></div>
+          <div class="avaPickWrap">
+            <div id="avaPicker" class="avaPicker"></div>
+            <div class="btnPair">
+              <input type="file" id="avaFile" class="fileHidden" accept="image/*" onchange="uploadAvatar()">
+              <label class="mini uploadBtn" for="avaFile">上传图片</label>
+              <button class="mini" type="button" id="avaClearWrap" onclick="clearAvatar()">清除</button>
+            </div>
+            <p class="muted hidden" id="avaMsg"></p>
+          </div>
+        </div>
+        <label>签名档<textarea id="bioInput" maxlength="140" placeholder="一句话介绍自己，或写一句喜欢的话"></textarea></label>
+        <button class="primary wide">保存资料</button>
+      </form>
+    </section>
+
+    <section class="setCard">
+      <h3>修改用户名</h3>
+      <form id="renameForm">
+        <label>新用户名<input id="renameUser" required maxlength="24" autocomplete="username"></label>
+        <label>当前密码<input id="renamePass" type="password" required autocomplete="current-password"></label>
+        <div id="renameCodeWrap" class="hidden">
+          <label>两步验证码<input id="renameCode" inputmode="numeric" maxlength="6" placeholder="6 位数字"></label>
+        </div>
+        <button class="primary wide">保存用户名</button>
+      </form>
+    </section>
+
+    <section class="setCard">
+      <h3>修改密码</h3>
+      <form id="repassForm">
+        <label>当前密码<input id="repassOld" type="password" required autocomplete="current-password"></label>
+        <label>新密码<input id="repassNew" type="password" required minlength="8" placeholder="至少 8 位"></label>
+        <div id="repassCodeWrap" class="hidden">
+          <label>两步验证码<input id="repassCode" inputmode="numeric" maxlength="6" placeholder="6 位数字"></label>
+        </div>
+        <button class="primary wide">修改密码</button>
+      </form>
+    </section>
+
+    <section class="setCard">
+      <h3>两步验证 (2FA)</h3>
+      <p class="muted" id="tfaState">状态读取中…</p>
+      <button class="ghost wide hidden" id="tfaOnBtn" type="button">开启两步验证</button>
+      <form id="tfaOffForm" class="hidden">
+        <label>当前密码<input id="tfaOffPass" type="password" required autocomplete="current-password"></label>
+        <label>两步验证码<input id="tfaOffCode" inputmode="numeric" maxlength="6" required placeholder="6 位数字"></label>
+        <button class="ghost wide">关闭两步验证</button>
+      </form>
+    </section>
+
+    <section class="setCard" id="duressCard">
+      <h3>胁迫密码</h3>
+      <p class="muted">遇到「有人逼着你解锁手机」这类情况时用的备选密码。用它登录会让账号立刻进入
+        <b>保护状态</b>：内容一条都不会被删，但账号会马上停用，只有站主能手动恢复。</p>
+      <p class="muted" id="duressState">状态读取中…</p>
+      <form id="duressForm">
+        <label>当前密码<input id="duressPass" type="password" required autocomplete="current-password"></label>
+        <label>胁迫密码<input id="duressInput" type="password" minlength="8" placeholder="至少 8 位，不能和登录密码相同" autocomplete="new-password"></label>
+        <div id="duressCodeWrap" class="hidden">
+          <label>两步验证码<input id="duressCode" inputmode="numeric" maxlength="6" placeholder="6 位数字"></label>
+        </div>
+        <div class="hrRow">
+          <button class="mini primary" type="submit">保存胁迫密码</button>
+          <button class="mini" type="button" id="duressClearBtn">清除</button>
+        </div>
+      </form>
+      <p class="muted">改登录密码不会把它冲掉，本站也看不到你设的是什么。</p>
+    </section>
+
+    <section class="setCard danger" id="delZone">
+      <h3>注销账号</h3>
+      <p class="muted" id="delNotice">账号会立即停用，全部主题与回复移入回收站。站主可以恢复它们，你自己不行 —— 请确认这是你要的。</p>
+      <form id="delForm">
+        <label>当前密码<input id="delPass" type="password" required autocomplete="current-password"></label>
+        <div id="delCodeWrap" class="hidden">
+          <label>两步验证码<input id="delCode" inputmode="numeric" maxlength="6" placeholder="6 位数字"></label>
+        </div>
+        <label>输入你的用户名以确认<input id="delConfirm" required placeholder="你的用户名"></label>
+        <button class="danger wide">永久注销</button>
+      </form>
+    </section>
+  </div>
+</dialog>
+
+<dialog id="storeDialog">
+  <div class="dialogHead"><h2>附件存储</h2><button class="x" type="button" onclick="storeDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody">
+    <section class="setCard">
+      <h3>存储接口</h3>
+      <p class="muted">图片、视频等附件的二进制放在外部存储，数据库只留索引。更换接口立即生效，不需要重新部署站点。</p>
+      <label>存储类型<select id="storeType">
+        <option value="none">关闭（不使用外部存储）</option>
+        <option value="webdav">WebDAV</option>
+        <option value="r2">Cloudflare R2</option>
+      </select></label>
+      <div id="storeWebdavFields">
+        <label>WebDAV 地址<input id="storeUrl" placeholder="https://dav.example.com/dav" autocomplete="off"></label>
+        <label>用户名<input id="storeUser" autocomplete="off"></label>
+        <label>密码<input id="storePass" type="password" placeholder="留空表示沿用已保存的密码" autocomplete="new-password"></label>
+      </div>
+      <div id="storeR2Fields" class="hidden">
+        <label>Bucket 绑定名<input id="storeBinding" value="BUCKET" autocomplete="off"></label>
+        <p class="muted">对应 wrangler.jsonc 里 r2_buckets 的 binding 名称。</p>
+      </div>
+      <label class="checkRow"><input type="checkbox" id="storeEnabled"> 启用附件上传</label>
+      <div class="hrRow">
+        <button class="mini" id="storeTestBtn" type="button">测试连接</button>
+        <button class="mini primary" id="storeSaveBtn" type="button">保存配置</button>
+      </div>
+      <p class="muted" id="storeMsg"></p>
+    </section>
+
+    <section class="setCard">
+      <h3>数据概况</h3>
+      <p class="muted" id="storeStats">读取中…</p>
+      <p class="muted">网盘删文件、改权限、限并发都是静默发生的。点一下体检，逐个问一遍存储里到底还在不在 ——
+        一次查 30 个（Workers 的子请求有上限），可以接着往下查。</p>
+      <div class="hrRow">
+        <button class="mini" id="storeCheckBtn" type="button" onclick="checkAttachments(0)">体检附件</button>
+        <button class="mini hidden" id="storeCheckMore" type="button">继续体检下一批</button>
+      </div>
+      <div id="storeCheckResult"></div>
+    </section>
+
+    <section class="setCard">
+      <h3>上传大小限制</h3>
+      <p class="muted">默认单个附件 30 MB、头像 2 MB。想放开了就填 0（不限制）。</p>
+      <label>单个附件上限（MB）<input id="limitUpload" type="number" min="0" max="100" step="1" inputmode="numeric"></label>
+      <label>头像上限（MB）<input id="limitAvatar" type="number" min="0" max="100" step="1" inputmode="numeric"></label>
+      <p class="muted" id="limitHint"></p>
+      <div class="hrRow"><button class="mini primary" id="limitSaveBtn" type="button" onclick="saveUploadLimit()">保存限制</button></div>
+      <p class="muted" id="limitMsg"></p>
+    </section>
+
+    <section class="setCard danger">
+      <h3>关闭存储并清除站内图片</h3>
+      <p class="muted">这会删除<b>所有带图片的主题与回复</b>，并清空附件记录与远端文件，<b>不可撤销</b>。请严格按 ① → ② → ③ 的顺序来。</p>
+      <p class="muted" id="storeStep">① 先导出备份包并保存到本地</p>
+      <div class="hrRow">
+        <button class="mini" id="storeExportBtn" type="button">① 导出备份包</button>
+        <button class="mini" id="storeConfirmBtn" type="button">② 我已下载备份</button>
+        <button class="mini danger" id="storePurgeBtn" type="button">③ 彻底清除</button>
+      </div>
+      <hr>
+      <label>从备份包还原<span class="muted">选择之前导出的 .zip</span>
+        <input type="file" id="storeImportFile" accept=".zip,application/zip">
+      </label>
+      <button class="mini" id="storeImportBtn" type="button">上传并还原</button>
+      <hr>
+      <p class="muted">传了却没被任何帖子引用的文件会变成孤儿，白占网盘空间。点下面可以清掉 24 小时前的那些。</p>
+      <button class="mini" id="storeSweepBtn" type="button">清理孤儿附件</button>
+    </section>
+  </div>
+</dialog>
+
+<dialog id="tfaDialog">
+  <div class="dialogHead"><h2>绑定两步验证</h2><button class="x" type="button" onclick="tfaDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody">
+    <p class="muted">用认证器应用（Google Authenticator、1Password、微软 Authenticator 等）扫描下方二维码。</p>
+    <div class="qrWrap"><div id="qr"></div></div>
+    <p class="muted" id="qrFallback">若二维码无法显示，可在认证器中手动输入下方密钥。</p>
+    <div class="secretRow"><code id="tfaSecret"></code><button class="mini" id="copySecret" type="button">复制</button></div>
+    <form id="tfaForm">
+      <label>当前密码<input id="tfaPass" type="password" required autocomplete="current-password"></label>
+      <label>验证码<input id="tfaCode" required inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6 位数字"></label>
+      <button class="primary wide">确认开启</button>
+    </form>
+  </div>
+</dialog>
+
+<dialog id="tfaLoginDialog">
+  <div class="dialogHead"><h2>两步验证</h2></div>
+  <form id="tfaLoginForm" class="dlgBody">
+    <p class="muted">请输入认证器应用上的 6 位验证码。</p>
+    <label>验证码<input id="tfaLoginCode" required inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000"></label>
+    <button class="primary wide">验证并登录</button>
+  </form>
+</dialog>
+
+<dialog id="boardDialog">
+  <div class="dialogHead"><h2>创建板块</h2><button class="x" type="button" onclick="boardDialog.close()" aria-label="关闭">×</button></div>
+  <form id="boardForm" class="dlgBody">
+    <p class="muted">板块是公共分类，任何人都能在里面发帖。创建后不能自行删除，需要删除请找管理员。</p>
+    <label>板块名称<input id="boardName" required maxlength="24" placeholder="例如：数码 / 摄影 / 闲聊"></label>
+    <label>简介（可选）<input id="boardDesc" maxlength="200" placeholder="一句话说明这个板块聊什么"></label>
+    <button class="primary wide">创建板块</button>
+  </form>
+</dialog>
+
+<dialog id="editDialog">
+  <div class="dialogHead"><h2>编辑内容</h2><button class="x" type="button" onclick="editDialog.close()" aria-label="关闭">×</button></div>
+  <form id="editForm" class="dlgBody" onsubmit="event.preventDefault();submitEdit()">
+    <label id="editTitleWrap">标题<input id="editTitle" maxlength="100"></label>
+    <div class="field">
+      <label>正文<textarea id="editBody" maxlength="10000" required></textarea></label>
+      <div class="mdBar" id="editMdBar" data-ta="#editBody" data-prev="#editMdPreview"></div>
+      <div class="mdPreview postBody hidden" id="editMdPreview"></div>
+    </div>
+    <label class="checkRow"><input type="checkbox" id="editSensitive"> 标记为「不易展示」（剧透 / 公共场合不宜）</label>
+    <button class="primary wide">保存修改</button>
+  </form>
+</dialog>
+
+<dialog id="repostDialog">
+  <div class="dialogHead"><h2>转帖</h2><button class="x" type="button" onclick="repostDialog.close()" aria-label="关闭">×</button></div>
+  <form id="repostForm" class="dlgBody">
+    <p class="muted">转帖会生成一条属于你的新主题，里面挂着原帖的引用卡；别人点那张卡就能跳回原帖。</p>
+    <div class="quotePreview" id="repostPreview"></div>
+    <div class="field">
+      <label>说点什么（可选）<textarea id="repostBody" maxlength="10000" placeholder="留空就是直接转，只挂一张引用卡"></textarea></label>
+      <div class="mdBar" id="repostMdBar" data-ta="#repostBody" data-prev="#repostMdPreview"></div>
+      <div class="mdPreview postBody hidden" id="repostMdPreview"></div>
+      <div class="fieldHint"><span>点上面的按钮就能加格式，不用背 Markdown</span></div>
+    </div>
+    <label>标题<input id="repostTitle" maxlength="100" placeholder="留空就用「转帖：原标题」"></label>
+    <label>板块<select id="repostBoard"><option value="">未分类</option></select></label>
+    <label class="checkRow"><input type="checkbox" id="repostSensitive"> 同时标记为「不易展示」（剧透 / 公共场合不宜）</label>
+    <p class="muted" id="repostHint">转自原帖的内容如果本身带限制标记，这里默认会跟着勾上 —— 免得被引用的一段剧透直接露在外面。</p>
+    <button class="primary wide">转帖</button>
+  </form>
+</dialog>
+
+<!-- 投票编辑：发帖框、回复框、以及「给已发出的内容补一个投票」共用这一张弹窗。
+     选项框在输入时不重排（重排会抢走光标），只有增删选项才重画。 -->
+<dialog id="pollDialog">
+  <div class="dialogHead"><h2>插入投票</h2><button class="x" type="button" onclick="pollDialog.close()" aria-label="关闭">×</button></div>
+  <form id="pollForm" class="dlgBody">
+    <p class="muted" id="pollHint">每个账号只能投一次，投完就能看到结果。</p>
+    <label>投票问题<input id="pollQuestion" maxlength="120" required placeholder="例如：今晚吃什么？"></label>
+    <div class="pollEdit">
+      <div class="pollEditHead"><span>选项</span><span class="muted" id="pollOptCount">2 / 10</span></div>
+      <div id="pollOptList"></div>
+      <button class="mini" type="button" id="pollAddOpt" onclick="addPollOption()">＋ 添加一个选项</button>
+    </div>
+    <label class="checkRow"><input type="checkbox" id="pollMulti"> 允许多选</label>
+    <p class="muted">多选时每个人仍然只有一票，但一次可以勾中多个选项。</p>
+    <div class="hrRow">
+      <button class="mini primary" type="submit">保存投票</button>
+      <button class="mini" type="button" onclick="pollDialog.close()">取消</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="editLogDialog">
+  <div class="dialogHead"><h2>编辑记录</h2><button class="x" type="button" onclick="editLogDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody" id="editLogBody"></div>
+</dialog>
+
+<!-- 回收站：自己删的能自己捞回来，管理员看得到全站被删的内容。
+     列表由 openTrash() 填，条目里带「恢复」和（站主专属的）「彻底删除」。 -->
+<dialog id="trashDialog">
+  <div class="dialogHead"><h2>回收站</h2><button class="x" type="button" onclick="trashDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody">
+    <p class="muted" id="trashHint">删除的内容会先放在这里。自己删掉的可以自己恢复；被管理员移除的，只有站主能恢复。</p>
+    <div class="searchRow"><input id="trashSearch" type="search" placeholder="搜索标题、内容或作者…" oninput="filterTrash()"><button class="mini" type="button" onclick="clearTrashSearch()">清除</button></div>
+    <div id="trashList"><p class="muted">读取中…</p></div>
+    <p class="muted" id="trashCount"></p>
+    <div class="hrRow hidden" id="trashTools">
+      <button class="mini danger" type="button" id="trashPurgeAll">清空回收站（不可恢复）</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- 用胁迫密码登录之后弹这个：说明内容都还在、账号已停用、要找站主。
+     刻意不写「你被胁迫了吗」之类的话 —— 屏幕对面的人可能正在看。 -->
+<dialog id="duressNotice">
+  <div class="dialogHead"><h2>账号已进入保护状态</h2></div>
+  <div class="dlgBody">
+    <p class="muted">这个账号已被暂停使用，需要站主手动恢复之后才能重新登录。</p>
+    <p class="muted">这个账号发出的所有内容（主题、回复、图片）都完整保留着，一条都没有被删除。</p>
+    <p class="muted">如果这不是你的本意，请联系站主。</p>
+    <button class="primary wide" type="button" onclick="duressNotice.close()">我知道了</button>
+  </div>
+</dialog>
+
+<div id="toast" popover="manual"></div>
+
+
+<script src="../../public/md.js"></script>
+
+<script>
+var THREADS=[{"id":4,"title":"使用说明（使用或注册代表同意如不同意请前往删除账号）","body":"建议使用浏览器进行访问\n发帖时可以带上发帖的板块，也可以什么都不管，在后台AI会自动整理归类！\n自由\n注意用户名虽不可以重名但是可以用大小写仿冒别人（不会管，需自行注意）\n---\n**责任边界**\n自己言论自己负责，网站所有者不负任何责任。\n我们唯一的责任就是维护\n纠纷请自己调解\n---\n**隐私保护**\n注册无需任何个人信息\n0日志（严格来说登陆时会保存3秒做验证，这个是无赖之举我以后会想办法解决这3秒）\n我们无法看到你的密码，你的密码经过了哈希加密，我们只保存加密后的哈希，你输入密码时你的密码会被算哈希和数据库中的哈希进行匹配，想要用明文算哈希很简单，但是哈希反推出原文在时间上来说几乎不可能\n分散式架构，无论以后遭遇多少不可抗力Web3架构无法真正的把这个网站删干净（全球免费CDN社区服务器有自主恢复能力，目前已扩充到6000台）\n人人都可登陆人人都可创号，所以你的话可能会冒犯到别人，但是请还是直言不讳！\n---\n26.9.23","pinned":1,"locked":0,"created_at":"2026-09-13 09:35:41","updated_at":"2026-09-15 11:38:59","edited_at":"2026-09-23 14:02:12","author_id":2,"board_id":7,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"rongrong","avatar":"att:16","board_name":"通知","replies":1,"likes":3,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":41,"title":"是谁我不说","body":"1. 是emo的\n2. 是偷东西的​\n3. 是爱打人的\n4. 是考试不会的​\n5. 是喜欢泼水的\n6. 是装M的\n7. 是没有边界感的\n8. 是找人要答案的\n9. 是盗视频发朋友圈\n10. 是装抑郁的\n11. 是脏话连篇的\n12. 是要拿纸条砸人的\n13. 是喜欢认兄弟(男的)\n14. 是在老师面前装可怜的\n15. 是没经允许拿东西的\n16. 是小红书快手使用者\n17. 是喜欢和nmf交朋友的\n[img:42]","pinned":0,"locked":0,"created_at":"2026-09-23 13:07:09","updated_at":"2026-09-23 15:16:50","edited_at":null,"author_id":15,"board_id":5,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"mmj","avatar":null,"board_name":"吐槽","replies":11,"likes":2,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":43,"title":"好好吃","body":"冰激凌好好吃啊 好吃好吃好吃好吃好吃好吃好吃好吃好好吃好吃好吃好吃好吃好吃好吃好吃","pinned":0,"locked":0,"created_at":"2026-09-23 14:01:16","updated_at":"2026-09-23 14:55:42","edited_at":null,"author_id":8,"board_id":4,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"全世界最有实力的人","avatar":null,"board_name":"灌水","replies":3,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":39,"title":"历史上的今天","body":"9月23日：双性恋自豪日、国际手语日、秋分\n\n\n---\n\n\n1846年\n根据法国数学家于尔班·勒威耶的预测，德国天文学家约翰·戈特弗里德·伽勒发现海王星（图）。\n\n1932年\n内志与汉志王国王储费萨尔代表其父亲宣布建立沙特阿拉伯王国。\n\n1939年\n奥地利精神分析学家西格蒙德·弗洛伊德因为罹患下颚癌，由其私人医师执行安乐死。\n\n1952年\n美国共和党副总统候选人理查德·尼克松在电视上发表跳棋演讲，这是政治家借助电视吸引民众的一个重要先河。\n\n2022年\n俄罗斯在卢甘斯克、顿涅茨克、扎波罗热和赫尔松四州举行为期5天的吞并公投，随后宣布吞并四州。\n[img:35]\n来自> https://zh.wikipedia.org/wiki/Wikipedia:%E9%A6%96%E9%A1%B5","pinned":0,"locked":0,"created_at":"2026-09-23 11:56:59","updated_at":"2026-09-23 13:43:55","edited_at":"2026-09-23 13:27:34","author_id":21,"board_id":3,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"AFF269","avatar":"att:22","board_name":"学习","replies":4,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":42,"title":"快放假！！！(教育局司马)","body":"快放假不放教育教育局司马","pinned":0,"locked":0,"created_at":"2026-09-23 13:29:04","updated_at":"2026-09-23 13:37:00","edited_at":null,"author_id":19,"board_id":5,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"这666","avatar":"att:32","board_name":"吐槽","replies":1,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":37,"title":"这是纯正的大粪","body":"看朋友圈，看朋友状态~~~😂😂😂😂忧郁女王吗？😂🤣🤣\n[img:30]\n[img:31]","pinned":0,"locked":0,"created_at":"2026-09-23 10:39:13","updated_at":"2026-09-23 12:22:02","edited_at":null,"author_id":3,"board_id":5,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"dkca","avatar":null,"board_name":"吐槽","replies":4,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":33,"title":"当我想帮助别人时labubu:","body":"[img:25]","pinned":0,"locked":0,"created_at":"2026-09-22 12:00:13","updated_at":"2026-09-23 11:52:43","edited_at":null,"author_id":15,"board_id":4,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"mmj","avatar":null,"board_name":"灌水","replies":10,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":30,"title":"我们的服务器","body":"**我们亲爱的耀哥给我们使用的服务器be like：**\n[img:19]","pinned":0,"locked":0,"created_at":"2026-09-22 11:37:21","updated_at":"2026-09-22 12:59:02","edited_at":"2026-09-22 11:37:52","author_id":21,"board_id":4,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"AFF269","avatar":"att:22","board_name":"灌水","replies":3,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":35,"title":"各种各样的骗","body":"三分钟加强版！\n[img:27]","pinned":0,"locked":0,"created_at":"2026-09-22 12:39:28","updated_at":"2026-09-22 12:44:20","edited_at":null,"author_id":9,"board_id":4,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"AAApo","avatar":"att:14","board_name":"灌水","replies":1,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":34,"title":"傻逼姓王的","body":"看到标题你们就应该知道我这次想喷哪个大傻逼了\n我很好奇有没有他小学的同学出来透露一下，这个逼是有神经病还是有多动症还是说几个都有？（还没领残疾证）\n一天到晚畜生事是真不少啊，净知道祸害别人祸害老师了（人家一个月才拿几个子啊有必要这样搞吗？虽然说有的傻逼老师也是活该）\n祝他全家出门被车制作成苹果派","pinned":0,"locked":0,"created_at":"2026-09-22 12:21:26","updated_at":"2026-09-22 12:22:54","edited_at":null,"author_id":21,"board_id":5,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"AFF269","avatar":"att:22","board_name":"吐槽","replies":1,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":31,"title":"历史上的今天","body":"9月22日：无车日、波罗的团结日（拉脱维亚、立陶宛）、霍比特节\n\n\n---\n\n\n**1236年**\n波罗的海沿岸地区的萨莫吉西亚人、瑟米加利亚人与宝剑骑士团爆发苏勒战役，宝剑骑士团此战几乎全军覆灭。\n**1630年**\n在后金发动大规模奇袭后，明朝皇帝崇祯帝下令处死明清战争重要将领袁崇焕。\n**1919年**\n威廉·Z·福斯特领导逾36万名美国钢铁员工发动罢工（图），要求实现8小时工作制、每周工作六天并改善劳工待遇。\n**1980年**\n伊拉克总统萨达姆·侯赛因下令针对伊朗空军基地发动空袭行动，两伊战争爆发。\n**1985年**\n美国、日本、英国、法国及西德的财政代表于美国纽约的广场饭店会晤后签署《广场协议》。\n[img:20]","pinned":0,"locked":0,"created_at":"2026-09-22 11:43:58","updated_at":"2026-09-22 11:43:58","edited_at":null,"author_id":21,"board_id":3,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"AFF269","avatar":"att:22","board_name":"学习","replies":0,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":23,"title":"没人觉得天天喊别人外号和家长名字很烦吗？？？","body":"我就不说某个姓王呢还有某个姓赵的还有某个姓杜的一天就逮着别人学号喊有病吧","pinned":0,"locked":0,"created_at":"2026-09-17 10:31:12","updated_at":"2026-09-22 11:38:53","edited_at":null,"author_id":19,"board_id":5,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"这666","avatar":"att:32","board_name":"吐槽","replies":2,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":25,"title":"这只是一对在热恋期的情侣而已🥵","body":"[img:10]","pinned":0,"locked":0,"created_at":"2026-09-19 11:35:41","updated_at":"2026-09-22 11:38:27","edited_at":null,"author_id":9,"board_id":4,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"AAApo","avatar":"att:14","board_name":"灌水","replies":3,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":28,"title":"快放假！！！","body":"快放假快放假快放假快放假快放假快放假快放假快放假快放假快放假快放假快放假快放假\n\n\n\n\n\n\nmj我的神","pinned":0,"locked":0,"created_at":"2026-09-21 10:39:25","updated_at":"2026-09-22 11:38:16","edited_at":null,"author_id":19,"board_id":4,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"这666","avatar":"att:32","board_name":"灌水","replies":2,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":27,"title":"依旧一天速成英语","body":"朱笔牛逼","pinned":0,"locked":0,"created_at":"2026-09-20 11:46:20","updated_at":"2026-09-20 15:13:22","edited_at":null,"author_id":19,"board_id":5,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"这666","avatar":"att:32","board_name":"吐槽","replies":1,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":26,"title":"每日一问","body":"[img:11]","pinned":0,"locked":0,"created_at":"2026-09-19 15:49:46","updated_at":"2026-09-19 15:49:46","edited_at":null,"author_id":9,"board_id":4,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"AAApo","avatar":"att:14","board_name":"灌水","replies":0,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":24,"title":"Reading","body":"谁能教我背","pinned":0,"locked":0,"created_at":"2026-09-17 13:41:58","updated_at":"2026-09-19 11:32:46","edited_at":null,"author_id":14,"board_id":3,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"神是没有名字的","avatar":null,"board_name":"学习","replies":1,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":18,"title":"鱿鱼文案","body":"「 你说爱过💔痛过💔恨过💔疼过💔等过💔想过💔念过💔写过💔醉过💔笑过💔哭过💔泪过💔伤过💔 有过💔梦过💔望过💔 懂过💔难过过小时候喜欢白天☁️长大了喜欢黑夜🌙💔小时候喜欢粉色长大了喜欢黑色🥀我喜欢天使👼却变成了恶魔💔现在的女生表面上疯疯癫癫🥀但大半夜在被窝哭泣💧💔💔悲伤过💔无奈过💔 .. 」  -.别骂哥们儿了，哥们的普通自己心里深深知道，那份自信都是装出来的。嘴里的倔强撑不过3秒就会哭着跪下来求你不要继续再说了。每一句都戳中哥们儿心中的痛点，就像小刀戳进指甲盖，先是猛得反抗，后面就只有疼痛的嚎叫花心被人骂💔专心被人耍💔好心被踏贱💔开水太烫💔我不敢喝💔人心太凉💔我也不敢摸💔从此以……走马观花💔不谈感情💔闺蜜背叛💔/.家人的误解💔/.同学的欺负💔/.生活的负担💔/.我喜欢血,因为血是甜的,以前我的枕头上都是口水💔/.现在都是泪水💔/.我有玉玉症..我的..枕头..底下..全是炸弹.我一不开心..我就炸自己...为什么...啊...我的第二人格...苏醒了...我要...黑化了...哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈哈记住🤲你是公主殿下👸，你要是受伤了🙇，他们👭👬👫🏃🚶💃否得噶💔💔💔💔💔💔💔💔💔💔寒心，真正的心寒，不是大吵大闹⚡真正的失望，不是泪流满面😭而是言语短短，目光冷淡👀我的话，你无动于衷❌你的事儿，我不再过问❓有一种伤害叫冷淡🧊有一种失望叫离开🐾别让在乎你的人变得冷漠无常🥺别让对你好的人变得沉默安静🤐因为失望是不爱的见证💔沉默是最好的报复👐🏻你好狠的心 你竟然责怪我 责怪我这个可怜无助的人 我无助的望着乌黑暗沉的天 那一片云朵像是被你的狠心撕裂般糜烂 没有一丝光彩 我对着天空嚎叫但又有谁能在意我 我只想让你明白可是这个一切都没有用哎我今天又emo了，想了很多事，我的遗憾我的眼泪，但我还是想说…[双击展开]快乐吗😊我的开心都是装出来的💔 黑暗和孤独会守护我💔我得了抑郁症💔面具已经戴累了💔 你们满意了吧？你们永远也不知道💔 凌晨的崩溃😞😞 带着鲜血的🔪湿润的枕头😭😭散乱的头发😿😿😿红着眼睛的我有多么狼狈😭👊💔我不是公主了…💔💔我低头了💔心碎王冠掉了…💔💔 坏人笑了💔💔没经历什么…我只想知道，为什么他们要伤害我😭💔，到底是为什么啊💔💔好累啊…欺骗，伤害，我真的累了，放过我吧💔💔🥀🖤我的世界，🖤🥀🥀🖤我就是规矩🖤🥀🥀🖤不要跟姐谈心，🖤🥀🥀🖤姐没心🖤🥀🥀🖤都是白开水，🖤🥀🥀🖤裝什么优乐美🖤🥀🥀🖤别和我玩，🖤🥀🥀🖤要玩就玩命🖤🥀🥀🖤如果愛，請深愛🖤，🥀🥀🖤如果不愛，別殇害，🖤🥀🥀🖤懂我的不必解释🖤🥀🥀🖤不懂我的又何必解释🖤🥀🥀🖤妳不懂硪的爱🖤🥀🥀🖤如果全世界都背判你🖤","pinned":0,"locked":0,"created_at":"2026-09-15 12:09:16","updated_at":"2026-09-16 11:51:23","edited_at":null,"author_id":16,"board_id":4,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"别想妄图窥探神","avatar":"att:41","board_name":"灌水","replies":3,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":14,"title":"耍起","body":"耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起耍起","pinned":0,"locked":0,"created_at":"2026-09-15 11:26:51","updated_at":"2026-09-16 11:37:08","edited_at":null,"author_id":14,"board_id":4,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"神是没有名字的","avatar":null,"board_name":"灌水","replies":2,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}},{"id":16,"title":"10月份我生日","body":"我希望听见很多生日快乐","pinned":0,"locked":0,"created_at":"2026-09-15 11:36:48","updated_at":"2026-09-15 12:00:58","edited_at":null,"author_id":14,"board_id":4,"sensitive":0,"protected":0,"quote_ref":null,"quote_snapshot":null,"username":"神是没有名字的","avatar":null,"board_name":"灌水","replies":1,"likes":0,"liked":0,"reposts":0,"att":{"10":{"mime":"image/jpeg","w":515,"h":900},"11":{"mime":"image/png","w":375,"h":500},"19":{"mime":"image/jpeg","w":548,"h":364},"20":{"mime":"image/webp","w":1920,"h":1276},"25":{"mime":"image/jpeg","w":1125,"h":1965},"27":{"mime":"video/mp4","w":null,"h":null},"30":{"mime":"image/jpeg","w":1440,"h":1730},"31":{"mime":"image/jpeg","w":828,"h":805},"35":{"mime":"image/webp","w":1920,"h":1279},"42":{"mime":"image/jpeg","w":1220,"h":1220}}}];
+// 回收站里的几类条目：主题 / 回复 / 账号
+var TRASH_ITEMS=[
+  {id:3,kind:'thread',target_id:3,parent_id:null,author_id:1,author_name:'rongrong',title:'一篇被删掉的长标题主题，用来看看回收站里的换行',excerpt:'正文摘要',item_count:5,deleted_by_name:'rongrong',by_owner:1,was_protected:1,deleted_at:'2026-09-22 20:10:00',can_restore:1,can_purge:1},
+  {id:2,kind:'post',target_id:11,parent_id:3,author_id:2,author_name:'tearsvow',title:'',excerpt:'这条是管理员移除的，作者自己不能恢复',item_count:1,deleted_by_name:'rongrong',by_owner:0,was_protected:0,deleted_at:'2026-09-22 19:40:00',can_restore:1,can_purge:1},
+  {id:1,kind:'user',target_id:9,parent_id:null,author_id:9,author_name:'ooo',title:'ooo',excerpt:'3 个主题 · 12 条回复 · 4 个附件',item_count:16,deleted_by_name:'rongrong',by_owner:0,was_protected:0,deleted_at:'2026-09-21 09:00:00',can_restore:1,can_purge:1}
+];
+var ME={id:1,username:'rongrong',role:'admin',bio:'在做一个安静的小论坛',avatar:'emoji:🐱',created_at:'2026-09-13 04:00:00',banned:0,totp_enabled:0,can_mod:1,can_admin:1,duress_set:1};
+var THREAD_DETAIL={"thread":{"id":4,"title":"使用说明（使用或注册代表同意如不同意请前往删除账号）","author_id":2,"body":"建议使用浏览器进行访问\n发帖时可以带上发帖的板块，也可以什么都不管，在后台AI会自动整理归类！\n自由\n注意用户名虽不可以重名但是可以用大小写仿冒别人（不会管，需自行注意）\n---\n**责任边界**\n自己言论自己负责，网站所有者不负任何责任。\n我们唯一的责任就是维护\n纠纷请自己调解\n---\n**隐私保护**\n注册无需任何个人信息\n0日志（严格来说登陆时会保存3秒做验证，这个是无赖之举我以后会想办法解决这3秒）\n我们无法看到你的密码，你的密码经过了哈希加密，我们只保存加密后的哈希，你输入密码时你的密码会被算哈希和数据库中的哈希进行匹配，想要用明文算哈希很简单，但是哈希反推出原文在时间上来说几乎不可能\n分散式架构，无论以后遭遇多少不可抗力Web3架构无法真正的把这个网站删干净（全球免费CDN社区服务器有自主恢复能力，目前已扩充到6000台）\n人人都可登陆人人都可创号，所以你的话可能会冒犯到别人，但是请还是直言不讳！\n---\n26.9.23","pinned":1,"locked":0,"created_at":"2026-09-13 09:35:41","updated_at":"2026-09-15 11:38:59","board_id":7,"edited_at":"2026-09-23 14:02:12","sensitive":0,"quote_ref":null,"quote_snapshot":null,"protected":0,"protected_at":null,"username":"rongrong","avatar":"att:16","bio":"我就爱用我的祖传头像","board_name":"通知","likes":3,"liked":0,"reposts":0},"posts":[{"id":14,"thread_id":4,"author_id":6,"body":"mj","created_at":"2026-09-15 11:21:32","reply_to":null,"edited_at":null,"sensitive":0,"quote_ref":null,"quote_snapshot":null,"protected":0,"protected_at":null,"username":"pipi","role":"user","avatar":"att:40","bio":"","likes":0,"liked":0,"reposts":0}],"att":{}};
+var USERS=[
+  {id:1,username:'rongrong',role:'admin',banned:0,totp_enabled:0,avatar:'emoji:🐱',duress_state:0,duress_set:1},
+  {id:2,username:'tearsvow',role:'user',banned:0,totp_enabled:0,avatar:'',duress_state:1,duress_set:1},
+  {id:3,username:'别想妄图窥探神',role:'user',banned:0,totp_enabled:1,avatar:'emoji:🦊',duress_state:0,duress_set:1},
+  {id:4,username:'全世界最有实力的人一个名字能有多长',role:'moderator',banned:0,totp_enabled:0,avatar:'emoji:🐼',duress_state:0,duress_set:0},
+  {id:5,username:'ooo',role:'user',banned:1,totp_enabled:0,avatar:'emoji:🐧',duress_state:0,duress_set:0}
+];
+var BOARDS=[{id:7,name:'技术',threads:2,description:'折腾与折腾之间的空档',creator:'rongrong'},{id:8,name:'闲聊',threads:1,creator:'tearsvow'},{id:9,name:'摄影',threads:0}];
+
+window.fetch=async function(url){
+  var body={};
+  if(url.indexOf('/api/status')>=0) body={setupNeeded:false,user:ME,uploadEnabled:true,maxUploadMb:30,maxAvatarMb:2};
+  else if(url.indexOf('/api/boards')>=0) body={boards:BOARDS,unboarded:1};
+  else if(/\/api\/threads\/\d+$/.test(url)) body=THREAD_DETAIL;
+  else if(url.indexOf('/api/threads')>=0) body={items:THREADS,total:4,page:1,pages:1,limit:20};
+  else if(/\/api\/users\/\d+/.test(url)) body={user:{id:2,username:'tearsvow',role:'user',bio:'',avatar:'',created_at:'2026-09-14 04:00:00',banned:0,duress_state:1,duress_at:'2026-09-22 21:30:00'},stats:{threads:2,replies:7,likes:23},
+    threads:[{id:4,title:'一个被置顶又锁定的主题标题',created_at:'2026-09-19 09:12:00',board_name:'闲聊'}],
+    posts:[{id:11,body:'说的是。深浅拉开之后，视线落点也清楚多了。',created_at:'2026-09-20 19:02:00',thread_id:3,thread_title:'关于配色的一点想法'}]};
+  else if(url.indexOf('/api/admin/users')>=0) body=USERS;
+  else if(url.indexOf('/api/admin/posts')>=0) body=[{id:11,body:'说的是。深浅拉开之后，视线落点也清楚多了，这段摘要写得长一点以便看出省略效果',created_at:'2026-09-20 19:02:00',thread_id:3,title:'关于配色的一点想法',username:'tearsvow'}];
+  else if(url.indexOf('/api/trash')>=0) body={items:TRASH_ITEMS,total:TRASH_ITEMS.length,page:1,pages:1,limit:20,admin:1};
+  else if(url.indexOf('/api/admin/storage')>=0) body={config:{type:'webdav',enabled:true,webdav:{baseUrl:'https://dav.example.com/dav',username:'rong',hasPassword:true}},attachments:{count:42,bytes:18350080},armed:{at:Date.now(),count:42}};
+  else if(url.indexOf('/api/admin/upload-limit')>=0) body={uploadMb:30,avatarMb:2,platformMaxMb:100};
+  else if(/\/api\/threads\/3\/edits/.test(url)) body={edits:[]};
+  else body={ok:true};
+  return {ok:true,status:200,json:async function(){return body}};
+};
+</script>
+<script src="../../public/app.js"></script>
+
+</body>
+</html>

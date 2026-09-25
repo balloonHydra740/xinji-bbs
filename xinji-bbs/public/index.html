@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="zh-CN" data-palette="violet" data-view="list">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f4f6fb">
+<title>星铃 BBS</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Crect%20width=%2264%22%20height=%2264%22%20rx=%2214%22%20fill=%22%230f172a%22/%3E%3Ctext%20x=%2232%22%20y=%2245%22%20font-size=%2240%22%20text-anchor=%22middle%22%20fill=%22%23fff%22%20font-family=%22sans-serif%22%3E%E6%98%9F%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+<script>
+/* 主题与配色必须在样式生效前就定好，否则首屏会闪一下默认色。
+   bbs_theme：light / dark / auto（老版本只写过 light|dark，这里兼容）。
+   bbs_palette：violet / ocean / mint / sunset / rose / slate。 */
+try{
+  var _m=localStorage.getItem('bbs_theme')||'auto';
+  var _dark=_m==='dark'||(_m!=='light'&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);
+  var _p=localStorage.getItem('bbs_palette')||'violet';
+  var _r=document.documentElement;
+  _r.setAttribute('data-theme',_dark?'dark':'light');
+  _r.setAttribute('data-palette',_p);
+}catch(e){}
+</script>
+</head>
+<body>
+<div class="bg"></div>
+<header>
+  <div class="hLeft">
+    <!-- 左上角导航菜单：板块列表 + 外观都收在里面。
+         以前板块是横着一排胶囊，板块一多就换行成两三排，首屏被占掉一大块；
+         顶栏那颗深浅切换也一并收进来（三档比「盲翻」清楚）。
+         图标是三个 <i> 而不是 SVG <line>：WebKit 对 SVG 子元素的 CSS transform
+         （transform-box / transform-origin 那套）历史上一路有 bug，
+         用普通行内块 + 绝对定位在任何内核表现都一样。 -->
+    <button id="navBtn" class="iconBtn navBtn" type="button" onclick="toggleNav(event)"
+            aria-haspopup="dialog" aria-controls="navDrawer" aria-expanded="false"
+            title="导航菜单" aria-label="打开导航菜单">
+      <span class="navIco" aria-hidden="true"><i></i><i></i><i></i></span>
+    </button>
+    <div class="brand">
+      <span class="logo">星</span>
+      <span class="brandText"><b>星铃</b><small>一个自由的讨论社区</small></span>
+    </div>
+  </div>
+  <div class="navActions">
+    <button id="newBtn" class="primary hidden">＋ 发帖</button>
+    <button id="loginBtn" class="ghost">登录</button>
+    <button id="userBtn" class="userBtn hidden" type="button" onclick="toggleUserMenu(event)" aria-haspopup="menu" aria-expanded="false">
+      <span id="meAva" class="ava avaMini"></span><b id="me">游客</b><span class="caret">▾</span>
+    </button>
+    <div id="userMenu" class="userMenu hidden" role="menu">
+      <button type="button" role="menuitem" id="profileBtn">我的主页</button>
+      <button type="button" role="menuitem" id="adminBtn" class="hidden">管理中心</button>
+      <button type="button" role="menuitem" id="settingsBtn" class="hidden">账户设置</button>
+      <!-- 回收站对所有登录用户开放：自己删掉的东西自己就能捞回来。
+          管理员点进去则看到全站被删的内容（后端按身份决定能看到多少）。 -->
+      <button type="button" role="menuitem" id="trashBtn" class="hidden">回收站</button>
+      <span class="menuSep"></span>
+      <button type="button" role="menuitem" id="logoutBtn" class="danger hidden">退出登录</button>
+    </div>
+  </div>
+</header>
+<main>
+  <section class="hero">
+    <div>
+      <span class="pill" id="heroPill">自由讨论 · BBS</span>
+      <h1 id="heroTitle">说点什么，留下你的痕迹。</h1>
+      <p id="heroDesc">这里是一个自由的讨论社区。可以发帖、回复，也可以带上图片和视频。</p>
+    </div>
+    <div class="stats"><b id="threadCount">—</b><small>个主题</small></div>
+  </section>
+  <section id="boardBar" class="boardBar hidden"></section>
+  <section id="app"></section>
+</main>
+
+<!-- 导航抽屉：常驻 DOM，靠 .open 类进出场（这样才有动画；
+     用 .hidden 直接 display:none 是没法过渡的）。
+     内容由 renderNav() 填，跟板块数据同源。 -->
+<div id="navMask" class="navMask" onclick="closeNav()"></div>
+<aside id="navDrawer" class="navDrawer" role="dialog" aria-modal="true" aria-label="站内导航" aria-hidden="true">
+  <div class="navDrawerHead">
+    <span class="navDrawerTitle">导航</span>
+    <button class="x" type="button" onclick="closeNav()" aria-label="关闭导航">×</button>
+  </div>
+  <div class="navDrawerBody" id="navBody"></div>
+</aside>
+
+<dialog id="authDialog">
+  <div class="dialogHead"><h2 id="authTitle">登录</h2><button class="x" type="button" onclick="authDialog.close()" aria-label="关闭">×</button></div>
+  <form id="authForm" class="dlgBody">
+    <label>用户名<input id="authUser" required maxlength="24" autocomplete="username"></label>
+    <label>密码<input id="authPass" required type="password" autocomplete="current-password"></label>
+    <button class="primary wide">继续</button>
+    <p class="switch" id="switchAuth">没有账号？<a href="#">注册</a></p>
+  </form>
+</dialog>
+
+<dialog id="setupDialog">
+  <div class="dialogHead"><h2>首次初始化</h2></div>
+  <form id="setupForm" class="dlgBody">
+    <p class="muted">创建第一个管理员账号。管理员可以管理用户、删除内容、置顶和锁定主题。</p>
+    <label>管理员用户名<input id="setupUser" required maxlength="24"></label>
+    <label>管理员密码<input id="setupPass" required type="password" minlength="10"></label>
+    <button class="primary wide">创建管理员</button>
+  </form>
+</dialog>
+
+<dialog id="postDialog">
+  <div class="dialogHead"><h2>发表主题</h2><button class="x" type="button" onclick="postDialog.close()" aria-label="关闭">×</button></div>
+  <form id="postForm" class="dlgBody">
+    <label>标题<input id="postTitle" maxlength="100" required placeholder="一个简短的标题"></label>
+    <div class="field">
+      <label>正文<textarea id="postBody" maxlength="10000" required placeholder="写下你想说的话……"></textarea></label>
+      <div class="mdBar" id="postMdBar" data-ta="#postBody" data-file="#postFile" data-prev="#postMdPreview"></div>
+      <input type="file" id="postFile" class="fileHidden" accept="image/*,video/*,audio/*" multiple onchange="uploadInto('#postFile','#postBody')">
+      <div class="progress hidden"><i></i></div>
+      <div class="upRow hidden"><span class="upTip muted"></span><button class="mini" type="button" onclick="cancelUpload()">取消</button></div>
+      <div class="mdPreview postBody hidden" id="postMdPreview"></div>
+      <div class="fieldHint"><span>点上面的按钮就能加格式，不用背 Markdown</span><span id="postDraftTip"></span></div>
+    </div>
+    <label>板块<select id="postBoard"><option value="">未分类</option></select></label>
+    <div class="pollCompose">
+      <div class="hrRow">
+        <button class="mini" type="button" id="postPollBtn" onclick="openPollDialog()">＋ 插入投票</button>
+        <span class="muted">每个账号只能投一次</span>
+      </div>
+      <div id="postPollChip"></div>
+    </div>
+    <label class="checkRow"><input type="checkbox" id="postSensitive"> 标记为「不易展示」（剧透 / 公共场合不宜）</label>
+    <p class="muted">勾上之后，开了「内容限制」的人会先看到一层模糊，需要滑动确认才能读完整内容。</p>
+    <button class="primary wide">发布</button>
+  </form>
+</dialog>
+
+<dialog id="settingsDialog">
+  <div class="dialogHead"><h2>账户设置</h2><button class="x" type="button" onclick="settingsDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody">
+    <section class="setCard">
+      <h3>外观</h3>
+      <p class="muted">配色只保存在这台设备上，换设备不会跟着走。</p>
+      <div id="palettePicker" class="palettePicker"></div>
+      <div class="segRow" id="themeSeg"></div>
+    </section>
+
+    <section class="setCard">
+      <h3>内容限制</h3>
+      <p class="muted">被作者或管理员标记为「不易展示」的内容（剧透、公共场合不宜）会先模糊掉，滑动确认之后才显示完整内容。</p>
+      <label class="checkRow"><input type="checkbox" id="sensitiveFilter" onchange="saveSensitiveFilter(this.checked)"> 对这类内容先模糊</label>
+      <p class="muted">这颗开关只影响你自己看到的画面，不会改动别人的帖子；关掉后这类内容就和普通帖子一样直接显示。</p>
+    </section>
+
+    <section class="setCard">
+      <h3>个人资料</h3>
+      <p class="muted">头像和签名档会显示在你的帖子和回复旁边，方便大家认出你。</p>
+      <form id="profileForm">
+        <div class="avaRow">
+          <div id="avaPreview"></div>
+          <div class="avaPickWrap">
+            <div id="avaPicker" class="avaPicker"></div>
+            <div class="btnPair">
+              <input type="file" id="avaFile" class="fileHidden" accept="image/*" onchange="uploadAvatar()">
+              <label class="mini uploadBtn" for="avaFile">上传图片</label>
+              <button class="mini" type="button" id="avaClearWrap" onclick="clearAvatar()">清除</button>
+            </div>
+            <p class="muted hidden" id="avaMsg"></p>
+          </div>
+        </div>
+        <label>签名档<textarea id="bioInput" maxlength="140" placeholder="一句话介绍自己，或写一句喜欢的话"></textarea></label>
+        <button class="primary wide">保存资料</button>
+      </form>
+    </section>
+
+    <section class="setCard">
+      <h3>修改用户名</h3>
+      <form id="renameForm">
+        <label>新用户名<input id="renameUser" required maxlength="24" autocomplete="username"></label>
+        <label>当前密码<input id="renamePass" type="password" required autocomplete="current-password"></label>
+        <div id="renameCodeWrap" class="hidden">
+          <label>两步验证码<input id="renameCode" inputmode="numeric" maxlength="6" placeholder="6 位数字"></label>
+        </div>
+        <button class="primary wide">保存用户名</button>
+      </form>
+    </section>
+
+    <section class="setCard">
+      <h3>修改密码</h3>
+      <form id="repassForm">
+        <label>当前密码<input id="repassOld" type="password" required autocomplete="current-password"></label>
+        <label>新密码<input id="repassNew" type="password" required minlength="8" placeholder="至少 8 位"></label>
+        <div id="repassCodeWrap" class="hidden">
+          <label>两步验证码<input id="repassCode" inputmode="numeric" maxlength="6" placeholder="6 位数字"></label>
+        </div>
+        <button class="primary wide">修改密码</button>
+      </form>
+    </section>
+
+    <section class="setCard">
+      <h3>两步验证 (2FA)</h3>
+      <p class="muted" id="tfaState">状态读取中…</p>
+      <button class="ghost wide hidden" id="tfaOnBtn" type="button">开启两步验证</button>
+      <form id="tfaOffForm" class="hidden">
+        <label>当前密码<input id="tfaOffPass" type="password" required autocomplete="current-password"></label>
+        <label>两步验证码<input id="tfaOffCode" inputmode="numeric" maxlength="6" required placeholder="6 位数字"></label>
+        <button class="ghost wide">关闭两步验证</button>
+      </form>
+    </section>
+
+    <section class="setCard" id="duressCard">
+      <h3>胁迫密码</h3>
+      <p class="muted">遇到「有人逼着你解锁手机」这类情况时用的备选密码。用它登录会让账号立刻进入
+        <b>保护状态</b>：内容一条都不会被删，但账号会马上停用，只有站主能手动恢复。</p>
+      <p class="muted" id="duressState">状态读取中…</p>
+      <form id="duressForm">
+        <label>当前密码<input id="duressPass" type="password" required autocomplete="current-password"></label>
+        <label>胁迫密码<input id="duressInput" type="password" minlength="8" placeholder="至少 8 位，不能和登录密码相同" autocomplete="new-password"></label>
+        <div id="duressCodeWrap" class="hidden">
+          <label>两步验证码<input id="duressCode" inputmode="numeric" maxlength="6" placeholder="6 位数字"></label>
+        </div>
+        <div class="hrRow">
+          <button class="mini primary" type="submit">保存胁迫密码</button>
+          <button class="mini" type="button" id="duressClearBtn">清除</button>
+        </div>
+      </form>
+      <p class="muted">改登录密码不会把它冲掉，本站也看不到你设的是什么。</p>
+    </section>
+
+    <section class="setCard danger" id="delZone">
+      <h3>注销账号</h3>
+      <p class="muted" id="delNotice">账号会立即停用，全部主题与回复移入回收站。站主可以恢复它们，你自己不行 —— 请确认这是你要的。</p>
+      <form id="delForm">
+        <label>当前密码<input id="delPass" type="password" required autocomplete="current-password"></label>
+        <div id="delCodeWrap" class="hidden">
+          <label>两步验证码<input id="delCode" inputmode="numeric" maxlength="6" placeholder="6 位数字"></label>
+        </div>
+        <label>输入你的用户名以确认<input id="delConfirm" required placeholder="你的用户名"></label>
+        <button class="danger wide">永久注销</button>
+      </form>
+    </section>
+  </div>
+</dialog>
+
+<dialog id="storeDialog">
+  <div class="dialogHead"><h2>附件存储</h2><button class="x" type="button" onclick="storeDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody">
+    <section class="setCard">
+      <h3>存储接口</h3>
+      <p class="muted">图片、视频等附件的二进制放在外部存储，数据库只留索引。更换接口立即生效，不需要重新部署站点。</p>
+      <label>存储类型<select id="storeType">
+        <option value="none">关闭（不使用外部存储）</option>
+        <option value="webdav">WebDAV</option>
+        <option value="r2">Cloudflare R2</option>
+      </select></label>
+      <div id="storeWebdavFields">
+        <label>WebDAV 地址<input id="storeUrl" placeholder="https://dav.example.com/dav" autocomplete="off"></label>
+        <label>用户名<input id="storeUser" autocomplete="off"></label>
+        <label>密码<input id="storePass" type="password" placeholder="留空表示沿用已保存的密码" autocomplete="new-password"></label>
+      </div>
+      <div id="storeR2Fields" class="hidden">
+        <label>Bucket 绑定名<input id="storeBinding" value="BUCKET" autocomplete="off"></label>
+        <p class="muted">对应 wrangler.jsonc 里 r2_buckets 的 binding 名称。</p>
+      </div>
+      <label class="checkRow"><input type="checkbox" id="storeEnabled"> 启用附件上传</label>
+      <div class="hrRow">
+        <button class="mini" id="storeTestBtn" type="button">测试连接</button>
+        <button class="mini primary" id="storeSaveBtn" type="button">保存配置</button>
+      </div>
+      <p class="muted" id="storeMsg"></p>
+    </section>
+
+    <section class="setCard">
+      <h3>数据概况</h3>
+      <p class="muted" id="storeStats">读取中…</p>
+      <p class="muted">网盘删文件、改权限、限并发都是静默发生的。点一下体检，逐个问一遍存储里到底还在不在 ——
+        一次查 30 个（Workers 的子请求有上限），可以接着往下查。</p>
+      <div class="hrRow">
+        <button class="mini" id="storeCheckBtn" type="button" onclick="checkAttachments(0)">体检附件</button>
+        <button class="mini hidden" id="storeCheckMore" type="button">继续体检下一批</button>
+      </div>
+      <div id="storeCheckResult"></div>
+    </section>
+
+    <section class="setCard">
+      <h3>上传大小限制</h3>
+      <p class="muted">默认单个附件 30 MB、头像 2 MB。想放开了就填 0（不限制）。</p>
+      <label>单个附件上限（MB）<input id="limitUpload" type="number" min="0" max="100" step="1" inputmode="numeric"></label>
+      <label>头像上限（MB）<input id="limitAvatar" type="number" min="0" max="100" step="1" inputmode="numeric"></label>
+      <p class="muted" id="limitHint"></p>
+      <div class="hrRow"><button class="mini primary" id="limitSaveBtn" type="button" onclick="saveUploadLimit()">保存限制</button></div>
+      <p class="muted" id="limitMsg"></p>
+    </section>
+
+    <section class="setCard danger">
+      <h3>关闭存储并清除站内图片</h3>
+      <p class="muted">这会删除<b>所有带图片的主题与回复</b>，并清空附件记录与远端文件，<b>不可撤销</b>。请严格按 ① → ② → ③ 的顺序来。</p>
+      <p class="muted" id="storeStep">① 先导出备份包并保存到本地</p>
+      <div class="hrRow">
+        <button class="mini" id="storeExportBtn" type="button">① 导出备份包</button>
+        <button class="mini" id="storeConfirmBtn" type="button">② 我已下载备份</button>
+        <button class="mini danger" id="storePurgeBtn" type="button">③ 彻底清除</button>
+      </div>
+      <hr>
+      <label>从备份包还原<span class="muted">选择之前导出的 .zip</span>
+        <input type="file" id="storeImportFile" accept=".zip,application/zip">
+      </label>
+      <button class="mini" id="storeImportBtn" type="button">上传并还原</button>
+      <hr>
+      <p class="muted">传了却没被任何帖子引用的文件会变成孤儿，白占网盘空间。点下面可以清掉 24 小时前的那些。</p>
+      <button class="mini" id="storeSweepBtn" type="button">清理孤儿附件</button>
+    </section>
+  </div>
+</dialog>
+
+<dialog id="tfaDialog">
+  <div class="dialogHead"><h2>绑定两步验证</h2><button class="x" type="button" onclick="tfaDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody">
+    <p class="muted">用认证器应用（Google Authenticator、1Password、微软 Authenticator 等）扫描下方二维码。</p>
+    <div class="qrWrap"><div id="qr"></div></div>
+    <p class="muted" id="qrFallback">若二维码无法显示，可在认证器中手动输入下方密钥。</p>
+    <div class="secretRow"><code id="tfaSecret"></code><button class="mini" id="copySecret" type="button">复制</button></div>
+    <form id="tfaForm">
+      <label>当前密码<input id="tfaPass" type="password" required autocomplete="current-password"></label>
+      <label>验证码<input id="tfaCode" required inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6 位数字"></label>
+      <button class="primary wide">确认开启</button>
+    </form>
+  </div>
+</dialog>
+
+<dialog id="tfaLoginDialog">
+  <div class="dialogHead"><h2>两步验证</h2></div>
+  <form id="tfaLoginForm" class="dlgBody">
+    <p class="muted">请输入认证器应用上的 6 位验证码。</p>
+    <label>验证码<input id="tfaLoginCode" required inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000"></label>
+    <button class="primary wide">验证并登录</button>
+  </form>
+</dialog>
+
+<dialog id="boardDialog">
+  <div class="dialogHead"><h2>创建板块</h2><button class="x" type="button" onclick="boardDialog.close()" aria-label="关闭">×</button></div>
+  <form id="boardForm" class="dlgBody">
+    <p class="muted">板块是公共分类，任何人都能在里面发帖。创建后不能自行删除，需要删除请找管理员。</p>
+    <label>板块名称<input id="boardName" required maxlength="24" placeholder="例如：数码 / 摄影 / 闲聊"></label>
+    <label>简介（可选）<input id="boardDesc" maxlength="200" placeholder="一句话说明这个板块聊什么"></label>
+    <button class="primary wide">创建板块</button>
+  </form>
+</dialog>
+
+<dialog id="editDialog">
+  <div class="dialogHead"><h2>编辑内容</h2><button class="x" type="button" onclick="editDialog.close()" aria-label="关闭">×</button></div>
+  <form id="editForm" class="dlgBody" onsubmit="event.preventDefault();submitEdit()">
+    <label id="editTitleWrap">标题<input id="editTitle" maxlength="100"></label>
+    <div class="field">
+      <label>正文<textarea id="editBody" maxlength="10000" required></textarea></label>
+      <div class="mdBar" id="editMdBar" data-ta="#editBody" data-prev="#editMdPreview"></div>
+      <div class="mdPreview postBody hidden" id="editMdPreview"></div>
+    </div>
+    <label class="checkRow"><input type="checkbox" id="editSensitive"> 标记为「不易展示」（剧透 / 公共场合不宜）</label>
+    <button class="primary wide">保存修改</button>
+  </form>
+</dialog>
+
+<dialog id="repostDialog">
+  <div class="dialogHead"><h2>转帖</h2><button class="x" type="button" onclick="repostDialog.close()" aria-label="关闭">×</button></div>
+  <form id="repostForm" class="dlgBody">
+    <p class="muted">转帖会生成一条属于你的新主题，里面挂着原帖的引用卡；别人点那张卡就能跳回原帖。</p>
+    <div class="quotePreview" id="repostPreview"></div>
+    <div class="field">
+      <label>说点什么（可选）<textarea id="repostBody" maxlength="10000" placeholder="留空就是直接转，只挂一张引用卡"></textarea></label>
+      <div class="mdBar" id="repostMdBar" data-ta="#repostBody" data-prev="#repostMdPreview"></div>
+      <div class="mdPreview postBody hidden" id="repostMdPreview"></div>
+      <div class="fieldHint"><span>点上面的按钮就能加格式，不用背 Markdown</span></div>
+    </div>
+    <label>标题<input id="repostTitle" maxlength="100" placeholder="留空就用「转帖：原标题」"></label>
+    <label>板块<select id="repostBoard"><option value="">未分类</option></select></label>
+    <label class="checkRow"><input type="checkbox" id="repostSensitive"> 同时标记为「不易展示」（剧透 / 公共场合不宜）</label>
+    <p class="muted" id="repostHint">转自原帖的内容如果本身带限制标记，这里默认会跟着勾上 —— 免得被引用的一段剧透直接露在外面。</p>
+    <button class="primary wide">转帖</button>
+  </form>
+</dialog>
+
+<!-- 投票编辑：发帖框、回复框、以及「给已发出的内容补一个投票」共用这一张弹窗。
+     选项框在输入时不重排（重排会抢走光标），只有增删选项才重画。 -->
+<dialog id="pollDialog">
+  <div class="dialogHead"><h2>插入投票</h2><button class="x" type="button" onclick="pollDialog.close()" aria-label="关闭">×</button></div>
+  <form id="pollForm" class="dlgBody">
+    <p class="muted" id="pollHint">每个账号只能投一次，投完就能看到结果。</p>
+    <label>投票问题<input id="pollQuestion" maxlength="120" required placeholder="例如：今晚吃什么？"></label>
+    <div class="pollEdit">
+      <div class="pollEditHead"><span>选项</span><span class="muted" id="pollOptCount">2 / 10</span></div>
+      <div id="pollOptList"></div>
+      <button class="mini" type="button" id="pollAddOpt" onclick="addPollOption()">＋ 添加一个选项</button>
+    </div>
+    <label class="checkRow"><input type="checkbox" id="pollMulti"> 允许多选</label>
+    <p class="muted">多选时每个人仍然只有一票，但一次可以勾中多个选项。</p>
+    <div class="hrRow">
+      <button class="mini primary" type="submit">保存投票</button>
+      <button class="mini" type="button" onclick="pollDialog.close()">取消</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="editLogDialog">
+  <div class="dialogHead"><h2>编辑记录</h2><button class="x" type="button" onclick="editLogDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody" id="editLogBody"></div>
+</dialog>
+
+<!-- 回收站：自己删的能自己捞回来，管理员看得到全站被删的内容。
+     列表由 openTrash() 填，条目里带「恢复」和（站主专属的）「彻底删除」。 -->
+<dialog id="trashDialog">
+  <div class="dialogHead"><h2>回收站</h2><button class="x" type="button" onclick="trashDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody">
+    <p class="muted" id="trashHint">删除的内容会先放在这里。自己删掉的可以自己恢复；被管理员移除的，只有站主能恢复。</p>
+    <div class="searchRow"><input id="trashSearch" type="search" placeholder="搜索标题、内容或作者…" oninput="filterTrash()"><button class="mini" type="button" onclick="clearTrashSearch()">清除</button></div>
+    <div id="trashList"><p class="muted">读取中…</p></div>
+    <p class="muted" id="trashCount"></p>
+    <div class="hrRow hidden" id="trashTools">
+      <button class="mini danger" type="button" id="trashPurgeAll">清空回收站（不可恢复）</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- 用胁迫密码登录之后弹这个：说明内容都还在、账号已停用、要找站主。
+     刻意不写「你被胁迫了吗」之类的话 —— 屏幕对面的人可能正在看。 -->
+<dialog id="duressNotice">
+  <div class="dialogHead"><h2>账号已进入保护状态</h2></div>
+  <div class="dlgBody">
+    <p class="muted">这个账号已被暂停使用，需要站主手动恢复之后才能重新登录。</p>
+    <p class="muted">这个账号发出的所有内容（主题、回复、图片）都完整保留着，一条都没有被删除。</p>
+    <p class="muted">如果这不是你的本意，请联系站主。</p>
+    <button class="primary wide" type="button" onclick="duressNotice.close()">我知道了</button>
+  </div>
+</dialog>
+
+<div id="toast" popover="manual"></div>
+
+<script src="/vendor/qrcode.min.js"></script>
+<script src="/md.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1364 @@
+/* ============================================================
+   星铃 BBS · 全站样式
+   ------------------------------------------------------------
+   阅读顺序（改样式前先看这里）：
+     1. 设计令牌      —— 尺寸 / 圆角 / 颜色，全站唯一来源，别再写魔数
+     2. 配色方案      —— 6 套 data-palette；深浅由 data-theme 切换
+     3. 基础与布局    —— reset / body / header / main / hero
+     4. 通用组件      —— 按钮家族 / 卡片 / 标签 / 输入 / 列表行
+     5. 业务区块      —— 主题列表 / 详情 / 楼中楼 / 个人主页 / 管理中心
+     6. 弹窗与浮层    —— dialog（手机上是底部抽屉）/ toast（顶层）
+     7. Markdown      —— 正文排版 / 编辑器工具栏 / 预览
+     8. 响应式        —— 全部集中在文件末尾，一处查看断点行为
+   ------------------------------------------------------------
+   三条反复踩过的坑，写在最前面免得再犯：
+     ① <button> 不继承 color，每个按钮类都必须显式写 color；
+     ② 同特异性时后写的赢 —— .mini 会顶掉 .primary 的底色，
+        所以组合态（.mini.primary / .mini.danger）必须显式写全；
+     ③ 中文在 flex 里没有词边界，min-content 只有一个汉字宽 ⇒
+        按钮必须 white-space:nowrap + flex:0 0 auto，收缩的活交给文字栏。
+   ============================================================ */
+
+/* ============ 1. 设计令牌 ============ */
+:root{
+  color-scheme:light;
+
+  /* 圆角：只有这几档 */
+  --r-xs:8px;  --r-sm:10px; --r-md:14px; --r-lg:18px; --r-xl:24px; --r-pill:999px;
+  /* 控件高度：全站只有三档，控制"大小不统一" */
+  --h-sm:30px; --h-md:38px; --h-lg:46px;
+  /* 间距 */
+  --sp-1:4px;  --sp-2:8px;  --sp-3:12px; --sp-4:16px; --sp-5:22px; --sp-6:32px;
+  /* 字号 */
+  --fs-xs:12px; --fs-sm:13px; --fs-md:14px; --fs-lg:16px; --fs-xl:20px;
+  /* 布局 */
+  --maxw:1060px;
+
+  /* 动效曲线 */
+  --ease-out-back:cubic-bezier(.34,1.56,.64,1);
+  --ease-out-expo:cubic-bezier(.16,1,.3,1);
+
+  /* 中性色（浅色） */
+  --bg:#f4f6fb;
+  --card:rgba(255,255,255,.88);
+  --card-solid:#fff;
+  --surface-2:#f5f7fc;
+  --surface-3:#eef1f8;
+  --text:#16203a;
+  --muted:#5a6478;
+  --line:#e4e8f1;
+  --line-2:#cfd7e6;
+  --shadow:0 18px 50px rgba(28,38,70,.10);
+  --shadow-sm:0 6px 20px rgba(28,38,70,.06);
+  /* 单独给一个「阴影色」：--shadow / --shadow-sm 是完整值，没法接在别的长度后面。
+     悬停时放大阴影要自定义偏移，就得拿颜色而不是整套值（也是 color-mix 的纯色退路）。 */
+  --shadow-ink:rgba(28,38,70,.16);
+  --ph:#5f687a;                   /* 占位符：浏览器默认的 #757575 在浅底上只有 4.45:1，正好卡在门槛下 */
+
+  /* 「实心主按钮」底色与字色。深色模式下这组必须整体反过来 ——
+     以前直接写 background:var(--text); color:#fff，深色下就成了
+     浅底白字（1.17:1），整颗按钮和上面的字一起消失。
+     这里直接取配色的 --p-accent2：主按钮、选中的板块胶囊、选中的档位按钮
+     全都用主题色，主题色才有存在感（六个配色的 accent2 白字对比度都在 5:1 以上）。 */
+  --btn-bg:var(--p-accent2);
+  --btn-fg:#fff;
+  /* 按钮里的次级文字（如板块胶囊上的计数）。
+     不要真的调低不透明度 —— 白字压主题色本来就快到门槛了，
+     再乘个 .7 的 alpha，浅色主题下只会剩 3.4:1。要区分主次就靠字号和字重。 */
+  --btn-dim:var(--btn-fg);
+
+  /* 危险语义（浅色：浅底深字 + 红色标记，见下方 .setCard.danger） */
+  --danger:#b3251f; --danger-lo:#9c1a18; --danger-hi:#c0292a;
+  --danger-bg:#b3251f; --danger-fg:#fff;
+  --danger-soft:#fffafa; --danger-line:#f4d2ce; --danger-edge:#eccac6;
+  --danger-ink:#8f1d18; --danger-text:#7c4a45;
+
+  /* 点赞：红是全世界对「心」的共同预期，这里单独给一套语义色，
+     不复用 --danger（那套是「删除 / 不可逆」的语言，混着用会让人不敢点）。
+     --like 只填图标（非文字，3:1 就够）；文字一律用 --like-ink，
+     它压在 --like-soft 浅底上仍然有 6:1 以上。 */
+  --like:#e11d48; --like-ink:#a8123a; --like-soft:#ffeef2;
+
+  /* 强调色由「配色方案」区块提供；这里只是把 --p-* 映射成语义名 */
+  --accent:var(--p-accent);
+  --accent2:var(--p-accent2);
+  --accent-soft:var(--p-soft);
+  --accent-ink:var(--p-ink);
+  --ring:var(--p-ring);
+  --tint-1:var(--p-t1);
+  --tint-2:var(--p-t2);
+  --logo-bg:var(--p-accent2);
+  --logo-fg:#fff;
+}
+
+/* ============ 2. 配色方案 ============
+   每套方案只定义 6 个色 + 它们的深色版本。想加新配色，
+   照抄下面任意一块改颜色即可 —— 全站没有任何一处硬编码强调色。
+   深浅两套强调色分别给 --p-*-d 后缀，由 [data-theme=dark] 取用。 */
+
+/* 星铃紫（默认） */
+:root,[data-palette="violet"]{
+  --p-accent:#6d5dfc;  --p-accent2:#4f46e5; --p-soft:#eeecff; --p-ink:#4f46e5;
+  --p-ring:rgba(109,93,252,.24); --p-t1:#e9e6ff; --p-t2:#dff3ff; --p-logo:#171b2d;
+  --p-accent-d:#cfc6ff; --p-accent2-d:#c3b5ff; --p-soft-d:#2c2a52; --p-ink-d:#cfc6ff;
+  --p-ring-d:rgba(207,198,255,.28); --p-t1-d:#1c2140; --p-t2-d:#122a3a;
+}
+/* 深海蓝 */
+[data-palette="ocean"]{
+  --p-accent:#2563eb;  --p-accent2:#1d4ed8; --p-soft:#e7efff; --p-ink:#1d4ed8;
+  --p-ring:rgba(37,99,235,.24); --p-t1:#dfe9ff; --p-t2:#e2f3ff; --p-logo:#122a5c;
+  --p-accent-d:#9fc0ff; --p-accent2-d:#b6d0ff; --p-soft-d:#1d2b4d; --p-ink-d:#b6d0ff;
+  --p-ring-d:rgba(159,192,255,.28); --p-t1-d:#16213c; --p-t2-d:#0f2a42;
+}
+/* 薄荷青 */
+[data-palette="mint"]{
+  --p-accent:#0d9488;  --p-accent2:#0f766e; --p-soft:#e2f6f3; --p-ink:#0f766e;
+  --p-ring:rgba(13,148,136,.24); --p-t1:#d7f3ee; --p-t2:#e2f4ff; --p-logo:#0b3b37;
+  --p-accent-d:#7fe4d6; --p-accent2-d:#9deade; --p-soft-d:#153a38; --p-ink-d:#9deade;
+  --p-ring-d:rgba(127,228,214,.28); --p-t1-d:#122f2e; --p-t2-d:#12303f;
+}
+/* 暖阳橘 */
+[data-palette="sunset"]{
+  --p-accent:#ea580c;  --p-accent2:#c2410c; --p-soft:#ffeee4; --p-ink:#9a3412;
+  --p-ring:rgba(234,88,12,.24); --p-t1:#ffe6d7; --p-t2:#fff4e2; --p-logo:#5c2a10;
+  --p-accent-d:#ffb98d; --p-accent2-d:#ffc9a6; --p-soft-d:#46281a; --p-ink-d:#ffc9a6;
+  --p-ring-d:rgba(255,185,141,.28); --p-t1-d:#35201a; --p-t2-d:#332614;
+}
+/* 玫瑰粉 */
+[data-palette="rose"]{
+  --p-accent:#db2777;  --p-accent2:#be185d; --p-soft:#ffe9f2; --p-ink:#be185d;
+  --p-ring:rgba(219,39,119,.24); --p-t1:#ffe1ee; --p-t2:#ffeaf6; --p-logo:#57143c;
+  --p-accent-d:#ff9ec8; --p-accent2-d:#ffb3d5; --p-soft-d:#421f33; --p-ink-d:#ffb3d5;
+  --p-ring-d:rgba(255,158,200,.28); --p-t1-d:#331c28; --p-t2-d:#301c2c;
+}
+/* 石墨灰（极简、无彩） */
+[data-palette="slate"]{
+  --p-accent:#475569;  --p-accent2:#334155; --p-soft:#eef1f6; --p-ink:#334155;
+  --p-ring:rgba(71,85,105,.24); --p-t1:#e6eaf2; --p-t2:#eef2f4; --p-logo:#1f2733;
+  --p-accent-d:#b9c6d8; --p-accent2-d:#cdd8e6; --p-soft-d:#28303f; --p-ink-d:#cdd8e6;
+  --p-ring-d:rgba(185,198,216,.28); --p-t1-d:#1a2130; --p-t2-d:#191f2c;
+}
+
+/* 深色模式：只改中性色 + 把强调色换成深色版本。
+   按钮类必须显式写全，因为 <button> 不继承 color，
+   且 .mini 会顶掉 .primary 的底色。 */
+[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0e1320;
+  --card:rgba(30,37,54,.88);
+  --card-solid:#1a2032;
+  --surface-2:#151b2a;
+  --surface-3:#1f2637;
+  --text:#e9edf7;
+  --muted:#a3aec6;
+  --line:#2c3448;
+  --line-2:#3d4762;
+  --shadow:0 18px 50px rgba(0,0,0,.5);
+  --shadow-sm:0 6px 20px rgba(0,0,0,.35);
+  --shadow-ink:rgba(0,0,0,.55);
+  --ph:#96a1ba;
+  --btn-bg:var(--p-accent2-d);
+  --btn-fg:#0e1320;
+  --btn-dim:var(--btn-fg);
+  --danger:#ff9d97; --danger-lo:#ffb5b0; --danger-hi:#ffd0cc;
+  --danger-bg:#f0574e; --danger-fg:#1b0e0d;
+  --danger-soft:#241a1c; --danger-line:#4a2c2e; --danger-edge:#5c3234;
+  --danger-ink:#ffb5b0; --danger-text:#e5a9a4;
+  --like:#ff6e8a; --like-ink:#ff9db0; --like-soft:#38202b;
+  --accent:var(--p-accent-d);
+  --accent2:var(--p-accent2-d);
+  --accent-soft:var(--p-soft-d);
+  --accent-ink:var(--p-ink-d);
+  --ring:var(--p-ring-d);
+  --tint-1:var(--p-t1-d);
+  --tint-2:var(--p-t2-d);
+  --logo-bg:var(--p-accent2-d); --logo-fg:#0e1320;
+}
+
+/* ============ 3. 基础与布局 ============ */
+*{box-sizing:border-box}
+/* -webkit-text-size-adjust 是为了 iOS 横屏不再自己放大字号。 */
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+/* 滚动条槽位只在桌面预留：锁滚动（抽屉打开）时 body 变成 fixed，
+   滚动条消失会让内容横跳 15px，提前占住槽位就没有这一下。
+   **手机上不能加** —— 手机本来没有常驻滚动条，加了反而让整页两侧
+   空出一条：实测手机档的弹窗就是被它从「占满宽度」挤成了 375/390。
+   （Safari 17.4 才支持，不支持时整条丢掉，没有副作用。） */
+@media(min-width:900px){ html{scrollbar-gutter:stable} }
+body{
+  margin:0;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:15px;line-height:1.6;
+  color:var(--text);background:var(--bg);
+  -webkit-font-smoothing:antialiased;
+}
+button,input,textarea,select{font:inherit;color:inherit}
+button{background:none;border:0;padding:0}
+/* 所有标题都允许在「任意位置」断行：中文会自动换行，所以一直没暴露问题 ——
+   但标题里可以是 100 个字符的长 URL 或一长串英文，没有空格可断，
+   窄屏上就会把卡片整个撑破（实测：320px 下横着溢出一百多像素）。
+   用 anywhere 而不是 break-word —— 只有前者能断开一个超长单词。 */
+h1,h2,h3,h4{margin:0;line-height:1.3;letter-spacing:-.01em;overflow-wrap:anywhere}
+a{color:var(--accent2)}
+.hidden{display:none!important}
+.bg{
+  position:fixed;inset:0;z-index:-1;
+  background:
+    radial-gradient(circle at 12% 4%,var(--tint-1) 0,transparent 30%),
+    radial-gradient(circle at 92% 14%,var(--tint-2) 0,transparent 26%);
+}
+
+/* ---- 顶栏 ---- */
+header{
+  height:64px;display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:0 max(16px,calc((100% - var(--maxw))/2));
+  position:sticky;top:0;z-index:6;
+  /* color-mix 的退路写在同一个属性上：不认识就丢掉后一条、留下实色。
+     比 @supports 兜底省一块代码，也不怕将来加了别的属性忘写退路。 */
+  background:var(--bg);
+  background:color-mix(in srgb,var(--bg) 78%,transparent);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border-bottom:1px solid var(--line);
+}
+/* 顶栏左侧：菜单按钮 + 品牌。包一层是为了不让 space-between 把
+   菜单按钮、品牌、右侧动作三等分 —— 只有这一层里两者才该贴在一起。 */
+.hLeft{display:flex;align-items:center;gap:var(--sp-3);min-width:0}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.logo{
+  display:grid;place-items:center;width:36px;height:36px;flex:0 0 auto;
+  border-radius:11px;background:var(--logo-bg);color:var(--logo-fg);
+  font-weight:800;font-size:17px;box-shadow:var(--shadow-sm);
+}
+.brandText{min-width:0}
+.brandText b{display:block;font-size:17px;line-height:1.2}
+.brandText small{display:block;color:var(--muted);font-size:var(--fs-xs);line-height:1.3}
+
+.navActions{display:flex;align-items:center;gap:var(--sp-2);flex:0 0 auto;position:relative}
+
+/* 用户名下拉菜单（桌面与手机同一套，省得维护两份导航） */
+.userMenu{
+  position:absolute;top:calc(100% + 10px);right:0;z-index:7;
+  min-width:190px;padding:var(--sp-1);
+  background:var(--card-solid);border:1px solid var(--line);border-radius:var(--r-md);
+  box-shadow:var(--shadow);display:flex;flex-direction:column;gap:2px;
+  animation:menuIn .22s var(--ease-out-expo) both;
+}
+@keyframes menuIn{from{opacity:0;transform:translateY(-6px) scale(.97)}to{opacity:1;transform:none}}
+.userMenu button{
+  display:flex;align-items:center;gap:var(--sp-2);
+  height:36px;padding:0 11px;border-radius:var(--r-xs);
+  font-size:var(--fs-sm);font-weight:700;color:var(--text);
+  text-align:left;cursor:pointer;white-space:nowrap;
+}
+.userMenu button:hover{background:var(--accent-soft);color:var(--accent-ink)}
+/* 「退出登录」必须把 button.danger 的整套实心样式收回来。
+   光写 color 是不够的 —— button.danger 的背景是实心红（--danger-bg），
+   而 .userMenu button.danger 又只改了 color，于是变成「红字压红底」，
+   整颗按钮看不见任何文字（截图里那个纯红胶囊就是这个）。
+   高度/圆角/内边距也得跟着菜单项走，否则它比旁边几项胖一圈。 */
+.userMenu button.danger{
+  background:transparent;color:var(--danger);
+  height:36px;padding:0 11px;border-radius:var(--r-xs);border:0;font-size:var(--fs-sm);
+}
+.userMenu button.danger:hover{background:var(--danger-soft);color:var(--danger)}
+.menuSep{height:1px;background:var(--line);margin:var(--sp-1) 6px}
+
+main{max-width:var(--maxw);margin:auto;padding:var(--sp-6) var(--sp-4) 96px}
+
+/* ---- 首页 hero：只留一句话，别再把首屏占满 ---- */
+.hero{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--sp-5);margin:var(--sp-2) 0 var(--sp-5)}
+.pill{font-size:11px;letter-spacing:.14em;font-weight:800;color:var(--accent2);text-transform:uppercase}
+.hero h1{font-size:clamp(22px,3.4vw,34px);margin:var(--sp-2) 0 var(--sp-2);letter-spacing:-.03em}
+.hero p{margin:0;color:var(--muted);max-width:620px;font-size:var(--fs-md)}
+.stats{
+  display:flex;align-items:baseline;gap:var(--sp-2);flex:0 0 auto;
+  padding:var(--sp-3) var(--sp-4);
+  background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);
+  box-shadow:var(--shadow-sm);
+}
+.stats b{font-size:22px;line-height:1;color:var(--accent2)}
+.stats small{color:var(--muted);font-size:var(--fs-xs)}
+
+/* ============ 4. 通用组件 ============ */
+
+/* ---- 按钮家族 ----
+   所有按钮共用同一套高度/圆角/字重/过渡，只有尺寸档位不同：
+     --h-md（38px）：.primary .ghost .pageBtn
+     --h-sm（30px）：.mini
+   组合态（.mini.primary / .mini.danger / .searchRow .mini.primary）
+   必须显式写全颜色 —— .mini 写在 .primary 之后，同特异性下会赢。 */
+.primary,.ghost,.mini,.pageBtn,.iconBtn,.chip,.avaPick,.mdBtn,.segBtn,.menuItem{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  font-family:inherit;font-weight:700;line-height:1;white-space:nowrap;
+  cursor:pointer;flex:0 0 auto;-webkit-tap-highlight-color:transparent;
+  transition:transform .18s var(--ease-out-back),background .2s ease,color .2s ease,
+             box-shadow .25s var(--ease-out-expo),border-color .2s ease;
+}
+.primary,.ghost,.pageBtn{height:var(--h-md);padding:0 var(--sp-4);font-size:var(--fs-md);border-radius:var(--r-md)}
+.mini{height:var(--h-sm);padding:0 var(--sp-3);font-size:var(--fs-sm);border-radius:var(--r-sm)}
+.wide{width:100%;margin-top:var(--sp-2)}
+
+.primary{background:var(--btn-bg);color:var(--btn-fg);border:1px solid var(--btn-bg);box-shadow:var(--shadow-sm)}
+.primary:hover{background:color-mix(in srgb,var(--btn-bg) 84%,var(--bg));border-color:transparent;transform:translateY(-1.5px)}
+.ghost{background:var(--card-solid);color:var(--text);border:1px solid var(--line)}
+.ghost:hover{border-color:var(--accent2);transform:translateY(-1.5px);box-shadow:var(--shadow-sm)}
+.mini{background:var(--card-solid);color:var(--text);border:1px solid var(--line)}
+.mini:hover{border-color:var(--accent2);transform:translateY(-1px)}
+.primary:active,.ghost:active,.mini:active,.pageBtn:active,.chip:active,.mdBtn:active{transform:scale(.96);transition-duration:.1s}
+
+/* 危险按钮：实心版只给「不可逆动作的终点」，描边版给列表里的删除 */
+button.danger{background:var(--danger-bg);color:var(--danger-fg);border:1px solid transparent;border-radius:var(--r-md);height:var(--h-md);padding:0 var(--sp-4);font-size:var(--fs-md);font-weight:700;cursor:pointer}
+button.danger:hover{background:var(--danger-lo)}
+.mini.danger{background:var(--card-solid);color:var(--danger);border:1px solid var(--danger-line);height:var(--h-sm);padding:0 var(--sp-3);font-size:var(--fs-sm);border-radius:var(--r-sm)}
+.mini.danger:hover{background:var(--danger-soft);border-color:var(--danger-edge)}
+/* 组合态显式写全：.mini 在文件里更靠后，会顶掉 .primary 的底色 */
+.mini.primary{background:var(--btn-bg);color:var(--btn-fg);border-color:var(--btn-bg)}
+/* 禁用的按钮要一眼看出是禁用的（比如投票选项只剩两个时的删除键）。
+   刻意不用 opacity —— 它把前景和背景一起压暗，对比度就不可控了；
+   换成中性色，仍然是审计里已有的组合。 */
+.mini:disabled,.mini.danger:disabled,.mini.primary:disabled{
+  background:var(--surface-3);color:var(--muted);border-color:var(--line);
+  cursor:not-allowed;transform:none;box-shadow:none;
+}
+.mini.primary:hover{background:color-mix(in srgb,var(--btn-bg) 84%,var(--bg));border-color:transparent}
+
+.iconBtn{width:var(--h-md);height:var(--h-md);border:1px solid var(--line);background:var(--card-solid);color:var(--text);border-radius:var(--r-md);font-size:16px}
+.iconBtn:hover{border-color:var(--accent2);background:var(--accent-soft);color:var(--accent-ink);transform:translateY(-1px) rotate(-12deg)}
+
+/* 顶栏的用户按钮：头像 + 名字 + 箭头，长得像一个整体 */
+.userBtn{display:inline-flex;align-items:center;gap:var(--sp-2);height:var(--h-md);padding:0 var(--sp-2) 0 6px;
+  border:1px solid var(--line);background:var(--card-solid);color:var(--text);border-radius:var(--r-pill);
+  font-size:var(--fs-sm);font-weight:700;cursor:pointer;max-width:180px;flex:0 0 auto;
+  transition:border-color .2s ease,transform .18s var(--ease-out-back)}
+.userBtn:hover{border-color:var(--accent2);background:var(--accent-soft);color:var(--accent-ink);transform:translateY(-1px)}
+.userBtn b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+.userBtn .caret{font-size:10px;color:var(--muted);flex:0 0 auto}
+
+/* 左上角菜单按钮。两处覆盖 .iconBtn：
+   ① 悬停不再旋转 —— 汉堡转 -12° 看着像渲染出错，这里只轻轻上浮；
+   ② 展开时三条线自己收成 ×。
+
+   图标刻意用三个 <i> 而不是 SVG <line>：WebKit 对 SVG 子元素的 CSS transform
+   （transform-box:view-box + transform-origin 那套）一路有 bug ——
+   同一个写法在 Safari 上会绕错中心点、过渡还可能不跑。普通行内块 +
+   绝对定位在任何内核都是同一套几何，改起来也直观。 */
+.navBtn:hover{transform:translateY(-1px)}
+.navIco{position:relative;display:block;width:18px;height:12px}
+.navIco i{
+  position:absolute;left:0;width:100%;height:2px;border-radius:2px;
+  background:currentColor;
+  transition:transform .34s var(--ease-out-expo),opacity .18s ease;
+}
+.navIco i:nth-child(1){top:0}
+.navIco i:nth-child(2){top:5px}
+.navIco i:nth-child(3){top:10px}
+/* 上下两条各自平移到中线再转 45° ⇒ 一个叉；中间那条淡出 */
+.navBtn[aria-expanded="true"] .navIco i:nth-child(1){transform:translateY(5px) rotate(45deg)}
+.navBtn[aria-expanded="true"] .navIco i:nth-child(2){opacity:0}
+.navBtn[aria-expanded="true"] .navIco i:nth-child(3){transform:translateY(-5px) rotate(-45deg)}
+
+/* 键盘焦点：描边画在外侧，压的是页面浅色背景 */
+.primary:focus-visible,.ghost:focus-visible,.mini:focus-visible,.chip:focus-visible,.iconBtn:focus-visible,
+.userBtn:focus-visible,.mdBtn:focus-visible,.segBtn:focus-visible,.avaPick:focus-visible,.x:focus-visible,
+.uploadBtn:focus-visible,.userMenu button:focus-visible,a:focus-visible,select:focus-visible,
+.act:focus-visible,
+input:focus-visible,textarea:focus-visible{outline:3px solid var(--accent2);outline-offset:2px}
+
+/* ---- 卡片 / 标签 ---- */
+.tag{
+  display:inline-flex;align-items:center;height:20px;padding:0 var(--sp-2);
+  font-size:11px;font-weight:700;border-radius:var(--r-pill);
+  background:var(--accent-soft);color:var(--accent-ink);white-space:nowrap;flex:0 0 auto;
+}
+.tag.board{background:var(--accent-soft);color:var(--accent-ink)}
+.tag.warn{background:#fdeee0;color:#8a4a08}
+.tag.mute{background:var(--surface-3);color:var(--muted)}
+[data-theme="dark"] .tag.warn{background:#3a2a16;color:#ffcb8a}
+
+/* ---- 输入 ---- */
+label{display:block;font-size:var(--fs-sm);font-weight:700;margin:var(--sp-4) 0}
+input,textarea,select{
+  width:100%;margin-top:7px;border:1px solid var(--line);border-radius:var(--r-md);
+  padding:0 var(--sp-3);height:var(--h-md);
+  outline:0;background:var(--surface-2);color:var(--text);
+  transition:border-color .2s ease,box-shadow .25s var(--ease-out-expo),background .2s ease;
+}
+textarea{height:auto;min-height:150px;padding:10px var(--sp-3);resize:vertical;line-height:1.6}
+input:focus,textarea:focus,select:focus{border-color:var(--accent);background:var(--card-solid);box-shadow:0 0 0 4px var(--ring)}
+select{appearance:none;-webkit-appearance:none;padding-right:34px;
+  background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+  background-position:calc(100% - 18px) 50%,calc(100% - 13px) 50%;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+/* iOS Safari 会替 type=search 套一整套原生样式（自绘圆角、内阴影、清除按钮的排版），
+   不接管的话搜索框跟旁边的「搜索」按钮看着就不像一个控件。
+   只针对 search —— checkbox 必须留着 appearance:auto，否则 accent-color 不上色。 */
+input[type=search]{-webkit-appearance:none;appearance:none}
+
+/* 占位符：浏览器默认的 #757575 在浅底上只有 4.45:1，正好卡在 AA 门槛下。
+   深浅两档各给一个色，危险卡片里的输入框也用同一个 —— 别再单独调一版。 */
+input::placeholder,textarea::placeholder{color:var(--ph);opacity:1}
+/* 禁用态也要保证字读得出来 */
+input:disabled,textarea:disabled,select:disabled{background:var(--surface-3);color:#626b7d;cursor:not-allowed}
+[data-theme="dark"] input:disabled,[data-theme="dark"] textarea:disabled,[data-theme="dark"] select:disabled{color:#8d97ad}
+/* 说明文字里会塞进远端返回的错误（含长网址）、存储地址这类东西，
+   不给断行机会的话它能把卡片顶出去 */
+.muted,.hint{color:var(--muted);font-size:var(--fs-sm);overflow-wrap:anywhere}
+.hint{margin-top:5px}
+.checkRow{display:flex;align-items:center;gap:var(--sp-2);font-weight:700}
+.checkRow input[type=checkbox]{width:18px;height:18px;margin:0;flex:0 0 auto;accent-color:var(--accent2)}
+
+/* ---- 列表行：管理中心 / 个人主页共用 ----
+   布局是 grid，不是 flex —— 这是「不同用户名挤占不同空间」的根治办法：
+   左边永远是 1fr（名字长了就省略号），右边永远是 auto（按钮组宽度固定），
+   于是每一行的按钮都落在同一条竖线上。
+
+   按钮组本身是 flex，而且 **flex:0 0 auto（绝不收缩）**：
+   以前它写的是 flex:0 1 auto + min-width:0，于是名字一长就被压窄、
+   里面的按钮自己折行 —— 截图里「删号」独自掉到第三行就是这么来的。
+   现在只有「真的放不下」时才会整体换到第二行，且始终右对齐。
+   min-width 统一给 104px，让「改密 / 封禁 / 删号」这类短标签宽度一致，
+   一行里不会出现三颗胖瘦不一的按钮。 */
+.row{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--sp-2) var(--sp-3);
+  align-items:center;padding:11px 2px;border-bottom:1px solid var(--line);font-size:var(--fs-sm);
+}
+.row:last-child{border-bottom:0}
+.row>*{min-width:0}
+.row>.rowMain{min-width:0;display:flex;align-items:center;gap:var(--sp-3)}
+.row>.rowText{min-width:0;overflow-wrap:anywhere}
+.rowActions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;flex:0 0 auto}
+.rowActions .mini{min-width:104px}
+
+/* ============ 5. 业务区块 ============ */
+
+/* ---- 主题列表 ---- */
+/* ⚠️ grid 的列必须写 minmax(0,1fr)，不能省。
+   只写 `display:grid` 的话，列宽是 auto —— 而 auto 列受**内容的 min-content** 约束：
+   列表里只要有一条帖子的正文含一个 58 字符的网址（中文会自动换行，纯 ASCII 不会），
+   整列就被撑到 477px，**所有卡片**跟着变宽，手机上整页横向溢出、文字跑到屏幕外。
+   实测过：390px 视口下 scrollWidth 变成 489。minmax(0,1fr) 把「不小于内容」这条去掉。 */
+.threadList{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--sp-3)}
+.thread{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:var(--sp-4) var(--sp-5);cursor:pointer;box-shadow:var(--shadow-sm);
+  transition:transform .3s var(--ease-out-back),box-shadow .3s var(--ease-out-expo),border-color .2s ease;
+}
+.thread:hover{
+  /* 先写纯色再写 color-mix：后者要 Safari 16.2+，不认识时上面这行兜住 */
+  border-color:var(--line-2);
+  box-shadow:0 18px 44px var(--shadow-ink),var(--shadow-sm);
+  transform:translateY(-3px);border-color:color-mix(in srgb,var(--accent2) 42%,var(--line));
+  box-shadow:0 18px 44px color-mix(in srgb,var(--accent2) 16%,transparent),var(--shadow-sm);
+}
+.thread:active{transform:translateY(-1px) scale(.995);transition-duration:.1s}
+.threadTop{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.thread h3{margin:var(--sp-2) 0;font-size:var(--fs-lg)}
+/* 预览里的长网址要能断行：这条是上面那个「整页横向溢出」的直接原因，
+   光靠 grid 的 minmax(0,1fr) 只是把它裁掉，断行才是真的排得下。 */
+.thread p{margin:0;color:var(--muted);font-size:var(--fs-md);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.meta{display:flex;align-items:center;gap:var(--sp-3);color:var(--muted);font-size:var(--fs-xs);margin-top:var(--sp-3);flex-wrap:wrap;overflow-wrap:anywhere}
+.thumbRow{display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--sp-3)}
+.thumbs{display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--sp-3)}
+.thumb,.thumbVideo{width:76px;height:76px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--surface-3)}
+.thumb{object-fit:cover;display:block}
+.thumbVideo{display:inline-flex;align-items:center;justify-content:center;font-size:var(--fs-xs);color:var(--muted);border-style:dashed}
+
+/* ---- 列表工具行：当前板块 + 搜索 / 分页 ----
+   板块不再横排铺开（十几个板块时会换三行，把首屏占掉一大块），
+   统一收进左上角菜单；这里只留一颗「当前板块」按钮 ——
+   否则筛选状态就完全看不见了，用户会以为列表漏了帖子。
+   这颗按钮和左上角菜单打开的是同一个抽屉。 */
+.boardBar{margin:0 0 var(--sp-4)}
+.filterRow{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap}
+.chip{height:32px;padding:0 var(--sp-3);border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:var(--r-pill);font-size:var(--fs-sm)}
+.chip:hover{border-color:var(--line-2);transform:translateY(-1.5px);box-shadow:var(--shadow-sm)}
+/* 高度对齐搜索框那一档；max-width 保证长板块名不会把搜索框挤走 */
+.chip.pickChip{height:var(--h-md);gap:6px;max-width:min(240px,52vw);justify-content:flex-start}
+.chip.pickChip:hover{border-color:var(--accent2)}
+.pickChip .pickK{font-size:var(--fs-xs);font-weight:700;color:var(--muted)}
+.pickChip b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+.pickChip .caret{font-size:9px;color:var(--muted);flex:0 0 auto}
+/* 板块按钮已占掉一部分宽度，搜索框给个小的 flex-basis：
+   放不下时整块换到第二行，而不是把自己压成一条 */
+.filterRow .searchRow{flex:1 1 240px;margin-top:0}
+
+.searchRow{display:flex;gap:var(--sp-2);margin-top:var(--sp-3);align-items:center;flex-wrap:wrap}
+/* flex-basis 必须写 0：input 的基础样式里有 width:100%，而 flex-basis:auto 会拿它当基准，
+   于是输入框一上来就占满整行，把「搜索」按钮挤到第二行去。 */
+.searchRow input{margin-top:0;flex:1 1 0;min-width:0;max-width:420px;height:var(--h-md)}
+
+.pager{display:flex;align-items:center;justify-content:center;gap:var(--sp-3);margin-top:var(--sp-5);flex-wrap:wrap}
+.pageBtn{padding:0 var(--sp-4)}
+.pageBtn:hover:not(:disabled){border-color:var(--accent2);transform:translateY(-1.5px)}
+.pageBtn:disabled{opacity:.45;cursor:default}
+.pageInfo{font-size:var(--fs-sm);color:var(--muted);white-space:nowrap}
+
+.empty{
+  padding:var(--sp-6) var(--sp-4);text-align:center;color:var(--muted);
+  /* 先写一条纯色边框再写 color-mix：color-mix 要 Safari 16.2+，
+     不支持时整条 border 简写会被丢弃 ⇒ 元素变成「没边框」而不是「边框淡一点」。 */
+  background:var(--card);border:1px dashed var(--line-2);
+  border-color:color-mix(in srgb,var(--accent2) 32%,var(--line));
+  border-radius:var(--r-lg);
+}
+
+/* ---- 主题详情 / 楼中楼 ---- */
+.view{max-width:820px;margin:auto}
+.view.adminView{max-width:none}   /* 管理中心要两列，别被正文宽度限制住 */
+.back{display:inline-flex;align-items:center;gap:4px;margin-bottom:var(--sp-3);color:var(--muted);cursor:pointer;font-size:var(--fs-sm);font-weight:700}
+.back:hover{color:var(--accent2);transform:translateX(-3px)}
+.post{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:var(--sp-5);margin-bottom:var(--sp-3)}
+.post.first{box-shadow:var(--shadow)}
+.post h1{font-size:clamp(20px,4.2vw,28px);margin:0 0 var(--sp-3);letter-spacing:-.02em}
+.postHead{display:flex;gap:var(--sp-2);align-items:center;margin-bottom:var(--sp-3)}
+.postWho{min-width:0;display:flex;flex-direction:column;gap:2px}
+.postWho b{font-size:var(--fs-md)}
+.postWho small{color:var(--muted);font-size:var(--fs-xs)}
+.postWho .sig{color:var(--muted);font-size:var(--fs-xs);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(320px,60vw)}
+.linkName{cursor:pointer}
+.linkName:hover{color:var(--accent2)}
+.postActions{margin-top:var(--sp-3);display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+.replies{display:flex;flex-direction:column;gap:var(--sp-3);margin-top:var(--sp-3)}
+/* --depth 由渲染时写在行内；封顶 3 层，再深手机就没法读了 */
+.post.nested{margin-left:calc(var(--depth,1) * 14px);border-left:2px solid var(--line-2);border-radius:var(--r-md)}
+.quoteBar{display:flex;flex-wrap:wrap;gap:4px;align-items:baseline;font-size:var(--fs-xs);color:var(--muted);
+  background:var(--surface-2);border-radius:var(--r-sm);padding:7px 11px;margin-bottom:10px;overflow-wrap:anywhere}
+.quoteBar i{font-style:normal;font-weight:700;color:var(--accent2);white-space:nowrap}
+.edited{cursor:pointer;border-bottom:1px dashed var(--line-2)}
+.replyTo{font-size:var(--fs-xs);color:var(--accent-ink);background:var(--accent-soft);
+  border-radius:var(--r-sm);padding:7px 11px;margin-bottom:var(--sp-2);display:flex;align-items:center;gap:var(--sp-2)}
+
+/* 回复框放在帖子末尾，不吸底。
+   吸底（position:sticky;bottom）看着省事，实际会把正文开头整段盖住 ——
+   帖子一打开先看到的是一个编辑框，得先滚一段才读到正文。
+   回复框在末尾更符合看帖的顺序；想回某一楼就点那一楼的「回复」，
+   它会自动把光标带到框里并滚过来（startReply → expandReply）。
+
+   手机端默认是**折叠**的一行提示条（.collapsed）：展开后 textarea + 工具栏
+   + 附件按钮要占掉大半个屏幕，而看帖时回复并不是主角。
+   点提示条或任何一楼「回复」都会展开。 */
+.replyBox{
+  background:var(--card);
+  border:1px solid var(--line-2);                                  /* 同上：color-mix 的退路 */
+  border-color:color-mix(in srgb,var(--accent2) 26%,var(--line));
+  padding:var(--sp-3);
+  border-radius:var(--r-lg);box-shadow:var(--shadow-sm);
+  display:flex;flex-direction:column;gap:var(--sp-2);
+  margin-top:var(--sp-2);
+}
+/* 从折叠展开时，刚露出来的那几块淡入一下，别硬生生跳出来 */
+.replyBox.opening>*{animation:fadeUp .3s var(--ease-out-expo) both}
+.replyOpen{display:none}
+.replyBox textarea{min-height:72px;border:0;background:transparent;padding:4px;box-shadow:none}
+.replyBox textarea:focus{box-shadow:none;background:transparent}
+.rowActions.end{justify-content:flex-end}
+
+/* ---- 上传 ----
+   附件入口只有 Markdown 工具栏里的「＋ 图片」一个（就是那个 file input 的标签），
+   进度条和文字提示直接挂在输入框下面。 */
+.fileHidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* uploadBtn 是「当按钮用的 label」：必须清掉表单 label 的上下 margin
+   （.setCard label{margin:var(--sp-3) 0} 会命中它，把它从 .btnPair 一行里拽下去 12px，
+   和旁边的 <button> 清除 形成对角线 —— 看着就像按钮画歪了）。
+   下面那条 (0,2,0) 是为了压过 .setCard label 的 (0,1,1) —— 光写 .uploadBtn 压不住。 */
+.uploadBtn{-webkit-user-select:none;user-select:none;line-height:1;margin:0}
+.setCard .uploadBtn{margin:0}
+/* 进度条：6px + 主题色渐变 + 一道来回扫的高光。
+   高光不只是好看 —— 上传中途卡住时，静态的条看不出「还在动」，
+   有条移动的高光就知道没死。宽度百分比由 JS 写在内层 <i> 上。 */
+.progress{position:relative;width:100%;height:6px;background:var(--surface-3);border-radius:var(--r-pill);overflow:hidden}
+.progress:not(.hidden){animation:fadeUp .22s var(--ease-out-expo) both}
+.progress i{position:relative;display:block;height:100%;width:0;border-radius:inherit;overflow:hidden;
+  background:linear-gradient(90deg,var(--accent),var(--accent2));
+  box-shadow:0 0 10px var(--ring);transition:width .18s linear}
+.progress i::after{content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.5),transparent);
+  animation:barSweep 1.05s linear infinite}
+@keyframes barSweep{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+/* 上传状态行：左边「正在上传 2/3 · 46%」，右边一颗「取消」。
+   文案会在字节发完后变成「正在保存到存储…」—— 那一段没有任何进度事件，
+   不换文案的话看着就像卡死了。 */
+.upRow{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-2);flex-wrap:wrap}
+.upRow:not(.hidden){animation:fadeUp .22s var(--ease-out-expo) both}
+.upRow .mini{flex:0 0 auto}
+.upTip{margin:0;font-size:var(--fs-xs);color:var(--muted)}
+
+.att{max-width:100%;width:auto;height:auto;object-fit:contain;border-radius:var(--r-sm)}
+.postBody .att{max-height:min(72vh,560px);margin:var(--sp-2) 0;display:block;background:var(--surface-2)}
+.postBody video.att{width:100%;max-width:560px;height:auto;background:#000}
+.postBody audio.att{width:100%;max-width:520px}
+/* 骨架只在「不知道尺寸」时给固定高度；知道尺寸时 width/height 已经把比例撑好了 */
+.att.loading{background:linear-gradient(100deg,var(--surface-3) 30%,var(--surface-2) 50%,var(--surface-3) 70%);background-size:220% 100%;animation:attSweep 1.1s linear infinite}
+img.att.loading:not([width]){min-height:110px}
+@keyframes attSweep{to{background-position:-220% 0}}
+.att.broken{min-height:56px;background:var(--danger-soft);border:1px dashed var(--danger-line)}
+/* 音视频加载失败时插进来的那条可点提示：破图框对 <video> 没有意义，
+   得有一行字告诉人「怎么了」和「怎么办」 */
+.attFailTip{
+  display:inline-flex;align-items:center;height:var(--h-sm);padding:0 var(--sp-3);margin:6px 0 0;
+  background:var(--danger-soft);color:var(--danger-ink);border:1px dashed var(--danger-line);
+  border-radius:var(--r-sm);font-family:inherit;font-size:var(--fs-sm);font-weight:700;cursor:pointer;
+}
+.attFailTip:hover{background:var(--danger);color:#fff;border-style:solid;border-color:var(--danger)}
+/* 破图可以点：给个手型，别让人以为点了没用 */
+img.att.broken{cursor:pointer}
+.attMissing{display:inline-block;color:var(--muted);font-size:var(--fs-sm);padding:2px var(--sp-2);border:1px dashed var(--line);border-radius:var(--r-xs)}
+
+/* ---- 头像 ---- */
+.ava,.avaMini,.avaBig{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border-radius:50%;background:var(--surface-3);color:var(--text);object-fit:cover;vertical-align:middle}
+.ava{width:30px;height:30px;font-size:15px}
+.avaMini{width:20px;height:20px;font-size:11px}
+.avaBig{width:64px;height:64px;font-size:28px}
+.avaEmoji{line-height:1}
+.avaLink{display:inline-flex;flex:0 0 auto;cursor:pointer;border-radius:50%;transition:transform .2s var(--ease-out-back)}
+.avaLink:hover{transform:scale(1.08)}
+.avaText{font-weight:800;background:linear-gradient(135deg,var(--tint-1),var(--tint-2));color:var(--text)}
+.avaRow{display:flex;gap:var(--sp-4);align-items:flex-start;flex-wrap:wrap;margin-top:var(--sp-2)}
+.avaPickWrap{flex:1 1 auto;min-width:0}
+.avaPicker{display:grid;grid-template-columns:repeat(auto-fill,minmax(36px,1fr));gap:6px}
+.avaPick{width:100%;height:36px;font-size:18px;border:1px solid var(--line);background:var(--card-solid);border-radius:var(--r-sm)}
+.avaPick.on{border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
+/* 头像的「上传 / 清除」两颗按钮：同一个 min-width ⇒ 一样大。
+   （以前上传那颗被 min-width:140px 撑成一条，和「清除」并肩站着像两个控件） */
+.btnPair{display:flex;gap:var(--sp-2);margin-top:var(--sp-2);flex-wrap:wrap}
+.btnPair>*{min-width:104px;flex:0 0 auto}
+
+/* ---- 用户主页 ---- */
+.profile{display:flex;gap:var(--sp-4);align-items:center;background:var(--card);border:1px solid var(--line);
+  border-radius:var(--r-lg);padding:var(--sp-5);margin-bottom:var(--sp-4);box-shadow:var(--shadow-sm);flex-wrap:wrap}
+.profileInfo{min-width:0;flex:1 1 auto}
+.profile h2{margin:0 0 6px;font-size:var(--fs-xl)}
+.profile h2 small{font-size:var(--fs-sm);font-weight:600;color:var(--muted);margin-left:6px}
+.profile p{margin:4px 0;font-size:var(--fs-md)}
+
+/* ---- 管理中心 ----
+   卡片是布局单元；行内的按钮组自己负责在放不下时换行（见上面 .rowActions），
+   不需要容器查询来介入 —— 让浏览器按真实可用宽度决定，比猜一个断点准。 */
+.admin{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(430px,100%),1fr));gap:var(--sp-4)}
+.adminCard{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:var(--sp-4) var(--sp-5)}
+.adminCard.full{grid-column:1/-1}
+.adminCard h3{font-size:var(--fs-md);margin-bottom:6px}
+/* 卡片标题前一小段主题色竖条：纯装饰，但能把六个配色的差别带进内容区，
+   否则主题色只出现在按钮上，换配色时整页几乎没变化。 */
+.adminCard h3::before,.setCard h3::before{
+  content:'';display:inline-block;width:3px;height:.82em;border-radius:2px;
+  background:var(--accent2);margin-right:7px;vertical-align:-1px;
+}
+.adminHead{display:flex;align-items:baseline;justify-content:space-between;gap:var(--sp-3);flex-wrap:wrap;margin-bottom:6px}
+.adminNote{margin:0 0 var(--sp-2);color:var(--muted);font-size:var(--fs-xs)}
+.adminTools{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:var(--sp-3)}
+/* 用户搜索：只过滤本地已拉到的名单（接口一次给 200 条），敲字即时出结果 */
+.adminSearch{margin:0 0 var(--sp-2)}
+.adminSearch input{max-width:320px}
+/* 用户行：头像 + 名字 + 角色标签 */
+.uInfo{display:flex;align-items:center;gap:var(--sp-2);min-width:0}
+.uName{display:flex;flex-direction:column;gap:3px;min-width:0}
+.uName b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.uTags{display:flex;gap:4px;flex-wrap:wrap}
+
+/* ---- 板块移动 ---- */
+.moveRow{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-4);padding-top:var(--sp-3);border-top:1px solid var(--line)}
+.moveRow select{width:auto;min-width:150px;margin-top:0;flex:0 1 auto}
+
+/* ---- 编辑记录 ---- */
+.editRow{padding:10px 0;border-bottom:1px solid var(--line)}
+.editRow:last-child{border-bottom:0}
+/* 同 .threadList：auto 列会被超长内容撑破 */
+.editDiff{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;margin-top:6px}
+.editBefore,.editAfter{font-size:var(--fs-sm);padding:var(--sp-2) 11px;border-radius:var(--r-sm);overflow-wrap:anywhere}
+.editBefore{background:#fdf3f2;color:#8f3a34}
+.editAfter{background:#f2f8f3;color:#2f6b41}
+[data-theme="dark"] .editBefore{background:#2e1f22;color:#f0a9a4}
+[data-theme="dark"] .editAfter{background:#1d2a22;color:#8fd6a4}
+
+/* ---- 不易展示内容：模糊 + 滑动确认 ----
+   两层保险才挡得住：内容本身 filter:blur，上面再盖一层近实色的 .coverVeil。
+   只用 blur 的话，短文本仍能看出字形轮廓 —— 那和没挡一样。
+
+   遮罩里的滑块必须真的「滑到底」才算数，所以：
+     · 默认不给 transition，拖拽才是跟手的；只有弹回时才临时挂上（.scBack）；
+     · .scKnob 上写 touch-action:none，否则手机上滑到一半会被当成滚动页面抢走。 */
+.coverWrap{position:relative;border-radius:var(--r-md);overflow:hidden}
+.coverWrap:not(.revealed) .coverBody{
+  filter:blur(14px);pointer-events:none;
+  -webkit-user-select:none;user-select:none;
+}
+.coverVeil{
+  position:absolute;inset:0;z-index:1;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:var(--sp-3);padding:var(--sp-4) var(--sp-3);text-align:center;
+  background:var(--card-solid);                                  /* color-mix 的退路 */
+  background:color-mix(in srgb,var(--card-solid) 88%,transparent);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+}
+.coverWrap.revealed .coverVeil{display:none}
+.coverNote{display:flex;flex-direction:column;gap:2px;max-width:34em}
+.coverNote b{font-size:var(--fs-md)}
+.coverNote span{font-size:var(--fs-xs);color:var(--muted)}
+
+.scTrack{
+  position:relative;width:min(300px,86%);height:var(--h-lg);flex:0 0 auto;
+  border-radius:var(--r-pill);background:var(--surface-3);border:1px solid var(--line-2);
+  display:flex;align-items:center;justify-content:center;overflow:hidden;
+}
+.scFill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--accent-soft);border-radius:var(--r-pill)}
+/* 提示文字压在滑块底下，滑过去时自然被盖住 */
+.scHint{position:relative;font-size:var(--fs-sm);font-weight:700;color:var(--muted);pointer-events:none;white-space:nowrap}
+.scKnob{
+  position:absolute;left:4px;top:4px;
+  width:calc(var(--h-lg) - 10px);height:calc(var(--h-lg) - 10px);
+  display:inline-flex;align-items:center;justify-content:center;
+  border-radius:var(--r-pill);border:1px solid var(--line-2);
+  background:var(--card-solid);color:var(--accent2);
+  font-size:var(--fs-md);font-weight:700;line-height:1;
+  cursor:grab;touch-action:none;box-shadow:var(--shadow-sm);
+  transition:none;                       /* 拖拽要跟手，只有弹回时才加过渡 */
+}
+.scKnob:active{cursor:grabbing}
+.scKnob:focus-visible{outline:0;box-shadow:0 0 0 4px var(--ring)}
+.coverWrap.scBack .scKnob{transition:transform .28s var(--ease-out-expo)}
+/* 拖到尽头：整颗滑块换成主题色，给一个「现在松手就会打开」的明确信号 */
+.coverWrap.scArmed .scKnob{background:var(--btn-bg);color:var(--btn-fg);border-color:var(--btn-bg)}
+.coverWrap.scArmed .scHint{color:var(--accent-ink)}
+
+/* ---- 点赞 / 转帖 / 引用 ----
+   一行图标按钮（图标 + 计数），不是一排文字按钮：
+   文字标签会把这行撑得很长，而且「赞 3」「转帖 1」这种短标签在手机上
+   比图标更容易误读成正文。图标一律 SVG —— emoji 在各平台形状不一致，
+   而且颜色要跟着状态变（赞过 = 填色）。 */
+.reactRow{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-3)}
+.thread .reactRow{margin-top:var(--sp-2)}
+.act{
+  position:relative;
+  display:inline-flex;align-items:center;gap:5px;
+  height:var(--h-sm);padding:0 10px;
+  border:1px solid transparent;border-radius:var(--r-pill);
+  background:transparent;color:var(--muted);
+  font-size:var(--fs-sm);font-weight:700;line-height:1;
+  cursor:pointer;flex:0 0 auto;-webkit-tap-highlight-color:transparent;
+  transition:background .2s ease,color .2s ease,transform .18s var(--ease-out-back);
+}
+.act:hover{background:var(--surface-2);color:var(--text)}
+.act:active{transform:scale(.94);transition-duration:.1s}
+.act .actIco{width:17px;height:17px;flex:0 0 auto;display:block}
+.actN{display:inline-block;min-width:1ch}
+/* 心默认只描边：满屏实心红会抢走正文的注意力；赞过才填上色 */
+.act-like .actIco path{fill:none;stroke:currentColor;stroke-width:2;stroke-linejoin:round}
+.act-like:hover{color:var(--like-ink);background:var(--like-soft)}
+.act-like.on{color:var(--like-ink);background:var(--like-soft)}
+.act-like.on .actIco path{fill:currentColor;stroke:none}
+.act-repost:hover{color:var(--accent-ink);background:var(--accent-soft)}
+.act-quote:hover{color:var(--accent-ink);background:var(--accent-soft)}
+.act-quote .actIco{width:15px;height:15px}
+.act-quote .actIco path{fill:currentColor}
+.actTxt{font-size:var(--fs-sm);font-weight:700}
+/* 赞的那一瞬间：图标弹一下 + 一圈扩散的光环。
+   光环不只是好看 —— 数字从 3 跳到 4 这种变化太安静，
+   没有这个反馈很多人会怀疑自己到底点没点上。 */
+@keyframes heartPop{0%{transform:scale(1)}30%{transform:scale(1.32)}55%{transform:scale(.9)}100%{transform:scale(1)}}
+/* 只在「这一下刚点出来」时弹：类名是 .burst，由 JS 在点赞成功后挂上。
+   如果光靠 .on，那么每次刷新页面、每颗已赞的心都会齐刷刷弹一次 —— 那是噪音。 */
+.act-like.on.burst .actIco{animation:heartPop .42s var(--ease-out-back) both}
+.act.burst::after{
+  content:'';position:absolute;left:19px;top:50%;
+  width:20px;height:20px;margin:-10px 0 0 -10px;
+  border:2px solid var(--like);border-radius:50%;
+  pointer-events:none;animation:actRing .5s var(--ease-out-expo) both;
+}
+@keyframes actRing{from{opacity:.75;transform:scale(.4)}to{opacity:0;transform:scale(2.4)}}
+/* 数字变动时向上滑一下，暗示「这个数刚变过」 */
+@keyframes numUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.actN.up{animation:numUp .28s var(--ease-out-expo)}
+
+/* ---- 引用卡 ----
+   转帖 / 引用别人的内容时挂出来的那一张。照**快照**渲染：
+   原内容被删了卡片还在（只是点过去会提示不存在），不会整块消失。
+   整张卡可点（跳回原处），所以要有 hover 反馈，但别做成整块大变色。 */
+.quoteCard{
+  display:flex;flex-direction:column;gap:3px;min-width:0;
+  margin:0 0 var(--sp-3);padding:10px var(--sp-3);
+  background:var(--surface-2);border:1px solid var(--line);
+  border-left:3px solid var(--accent2);border-radius:var(--r-sm);
+  cursor:pointer;
+  transition:background .2s ease,border-color .2s ease,transform .18s var(--ease-out-expo);
+}
+.quoteCard:hover{background:var(--accent-soft);transform:translateY(-1px)}
+.qHead{display:flex;align-items:center;gap:6px;min-width:0;font-size:var(--fs-xs);color:var(--muted)}
+.qHead b{color:var(--text);font-size:var(--fs-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qHead .tag{margin-left:auto}
+.qTitle{font-size:var(--fs-md);overflow-wrap:anywhere}
+.qText{
+  font-size:var(--fs-sm);color:var(--muted);overflow-wrap:anywhere;
+  overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+}
+/* 转帖弹窗里那张只是预览，不能点、也不该有 hover 位移 */
+.quotePreview{margin:0 0 var(--sp-2)}
+.quotePreview .quoteCard{cursor:default;margin:0}
+.quotePreview .quoteCard:hover{background:var(--surface-2);transform:none}
+
+/* ---- 投票 ----
+   一张卡片装三件事：问题、选项 / 结果、票数说明。
+   未投票时可点、不显示票数；投过之后同一块区域换成结果条 —— 两种形态共用一套
+   内边距和字号，切换时不会跳一下。
+   ⚠️ 单列 grid 一律写 minmax(0,1fr)：只写 display:grid 时列宽是 auto，
+      一个超长选项会把整张卡撑出容器（这条坑全站已经踩过一次）。 */
+.pollCard{
+  display:grid;grid-template-columns:minmax(0,1fr);gap:var(--sp-2);
+  margin:var(--sp-3) 0 0;padding:var(--sp-3) var(--sp-4) var(--sp-4);
+  border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface-2);
+}
+.pollHead{display:flex;align-items:center;gap:var(--sp-2);min-width:0}
+.pollHead b{font-size:var(--fs-md);overflow-wrap:anywhere}
+.pollHead .tag{margin-left:auto}
+.pollIco{width:18px;height:18px;flex:0 0 auto;color:var(--accent2)}
+.pollIco path{fill:currentColor}
+.pollOpts{display:grid;grid-template-columns:minmax(0,1fr);gap:6px}
+.pollOpt{
+  display:flex;align-items:center;gap:var(--sp-2);
+  width:100%;min-height:var(--h-sm);padding:6px var(--sp-3);
+  border:1px solid var(--line-2);border-radius:var(--r-sm);
+  background:var(--card-solid);color:var(--text);
+  font-size:var(--fs-md);font-weight:600;text-align:left;cursor:pointer;
+}
+.pollOpt:hover{border-color:var(--accent2);color:var(--accent-ink);background:var(--accent-soft)}
+.pollOpt:active{transform:scale(.985);transition-duration:.1s}
+.pollOpt.on{border-color:var(--accent2);background:var(--accent-soft);color:var(--accent-ink)}
+/* 单选圆点 / 多选方框做成同一个形状：两种投票在视觉上是同一族东西 */
+.pollMark{
+  width:16px;height:16px;flex:0 0 auto;border-radius:50%;
+  border:1.5px solid var(--line-2);background:var(--card-solid);
+  box-shadow:inset 0 0 0 3px var(--card-solid);
+}
+.pollOpt.on .pollMark{border-color:var(--accent2);background:var(--accent2)}
+.pollOptTxt{min-width:0;overflow-wrap:anywhere}
+.pollRes{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;padding:5px var(--sp-3);border-radius:var(--r-sm)}
+.pollRes.mine{background:var(--accent-soft)}
+.pollResTop{display:flex;align-items:baseline;justify-content:space-between;gap:var(--sp-3)}
+.pollResLabel{min-width:0;font-size:var(--fs-md);overflow-wrap:anywhere}
+.pollResNum{flex:0 0 auto;font-size:var(--fs-xs);font-weight:700;color:var(--muted);white-space:nowrap}
+.pollTick{display:inline-block;margin-right:5px;font-weight:900;color:var(--accent-ink)}
+.pollBar{display:block;height:8px;border-radius:var(--r-pill);background:var(--surface-3);overflow:hidden}
+.pollBar i{display:block;height:100%;border-radius:inherit;background:var(--accent2);transition:width .35s var(--ease-out-expo)}
+.pollSubmit{justify-self:start;min-width:104px;flex:0 0 auto}
+.pollFoot{font-size:var(--fs-xs);overflow-wrap:anywhere}
+
+/* 列表里的摘要：整张卡片本来就是「点进去看」，
+   在列表里铺开一排选项既占地方，也让人误以为能直接在列表里投。 */
+.pollMini{
+  display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  margin-top:var(--sp-2);font-size:var(--fs-xs);color:var(--muted);
+}
+.pollMini b{min-width:0;font-size:var(--fs-sm);font-weight:700;color:var(--text);overflow-wrap:anywhere}
+.pollMini .pollIco{width:15px;height:15px}
+.pollMiniGo{flex:0 0 auto;font-weight:700;color:var(--accent-ink);white-space:nowrap}
+
+/* ---- 投票编辑器 ---- */
+.pollCompose{margin-top:var(--sp-2)}
+.pollChip{
+  display:grid;grid-template-columns:minmax(0,1fr);gap:6px;
+  margin-top:var(--sp-2);padding:var(--sp-2) var(--sp-3);
+  border:1px dashed var(--line-2);border-radius:var(--r-sm);background:var(--surface-2);
+}
+.pollChipHead{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.pollChipHead b{min-width:0;font-size:var(--fs-sm);overflow-wrap:anywhere}
+.chipActs{display:flex;gap:6px;flex-wrap:wrap}
+.pollEdit{
+  display:grid;grid-template-columns:minmax(0,1fr);gap:6px;
+  margin:var(--sp-3) 0;padding:var(--sp-3);
+  border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2);
+}
+.pollEditHead{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-2);font-size:var(--fs-sm);font-weight:700}
+.pollOptRow{display:flex;align-items:center;gap:var(--sp-2)}
+/* 序号用圆底而不是「1.」：和选项后面的删除按钮在视觉上分层，扫一眼就知道哪一行是哪个 */
+.pollOptNo{
+  flex:0 0 auto;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;
+  border-radius:50%;background:var(--surface-3);color:var(--muted);font-size:var(--fs-xs);font-weight:800;
+}
+/* 输入框底色抬一档：panel 本身就是 --surface-2，输入框再同色就只剩一条边框，
+   看不出「这里可以打字」 */
+.pollOptRow input{flex:1 1 auto;min-width:0;margin-top:0;background:var(--card-solid)}
+.pollDel{flex:0 0 auto;min-width:34px;padding:0 8px}
+
+/* ---- 内容保护 ---- */
+/* 「已保护」角标：用主题色描边而不是实心块 —— 它是个状态标记，
+   不该和「置顶」那种操作结果抢注意力。 */
+.shieldTag{background:var(--accent-soft);color:var(--accent-ink);border:1px solid var(--accent2)}
+.shieldNote{
+  margin:0 0 var(--sp-3);padding:8px 11px;border-radius:var(--r-sm);
+  background:var(--accent-soft);color:var(--accent-ink);
+  font-size:var(--fs-xs);font-weight:600;
+}
+/* 胁迫模式横幅：用户主页顶上那块。左侧红条表示「这不是正常状态」，
+   正文本身仍是中性色 —— 整块染红会让人以为这人在被处罚。 */
+.shieldBanner{
+  display:flex;flex-direction:column;gap:4px;
+  margin:0 0 var(--sp-4);padding:var(--sp-3) var(--sp-4);
+  background:var(--surface-2);border:1px solid var(--line);
+  border-left:4px solid var(--danger);border-radius:var(--r-md);
+}
+.shieldBanner b{font-size:var(--fs-md)}
+.shieldBanner span{font-size:var(--fs-sm);color:var(--muted)}
+
+/* ---- 回收站 ---- */
+#trashDialog .rowText{display:flex;flex-direction:column;gap:3px}
+/* 左侧类型色条：主题=主题色 / 回复=中性灰 / 账号=红。
+   三类条目混在一屏里时，角标要读字才分得清，色条扫一眼就够了。 */
+#trashDialog .row{position:relative;padding-left:11px}
+#trashDialog .row::before{
+  content:'';position:absolute;left:0;top:10px;bottom:10px;width:3px;
+  border-radius:2px;background:var(--line-2);
+}
+#trashDialog .row.t-thread::before{background:var(--accent2)}
+#trashDialog .row.t-user::before{background:var(--danger)}
+.trashTags{display:flex;gap:4px;flex-wrap:wrap}
+.trashTitle{font-weight:700;font-size:var(--fs-sm);overflow-wrap:anywhere}
+.trashNo{font-size:var(--fs-xs);white-space:nowrap}
+/* 回收站行的按钮不需要 .rowActions 那套 104px 统一定宽 ——
+   那是为了让管理中心的按钮落在同一条竖线上，而弹窗只有 480px 宽，硬撑会把标题挤没。 */
+#trashDialog .rowActions .mini{min-width:0}
+#trashDialog #trashSearch{margin-top:0;max-width:none}
+#trashDialog .searchRow{margin:0}
+
+/* 不可用的设置卡（如管理员看到的「胁迫密码」）：样式退成中性 + 虚线框，
+   和「管理员不允许注销」那张卡同一套语言。 */
+.setCard.is-locked{border-style:dashed}
+.setCard.is-locked h3::before{background:var(--line-2)}
+
+/* 列表与缩略图：只做轻度模糊 + 角标，真正的确认留给详情页的滑动条 */
+.blurLock{filter:blur(7px);-webkit-user-select:none;user-select:none}
+.lockTip{color:var(--accent-ink);font-weight:700}
+/* 回复框 / 弹窗里的那颗勾选：清掉 label 自带的上下 margin，
+   否则会在 flex 列里撑出一大块空白 */
+.checkRow.slim{margin:0;font-size:var(--fs-sm);font-weight:600}
+
+/* ============ 6. 弹窗与浮层 ============ */
+dialog{
+  border:0;border-radius:var(--r-xl);padding:0;width:min(480px,calc(100% - 24px));
+  max-height:min(86vh,860px);max-height:min(86dvh,860px);
+  box-shadow:0 30px 100px rgba(17,24,39,.28);background:var(--card-solid);color:var(--text);
+}
+dialog[open]{display:flex;flex-direction:column}
+/* 弹窗入场：以前是「啪」地出现，和页面里其它东西的节奏对不上。
+   幅度刻意很小（14px + 0.985），这是个浮层，不是从屏幕外飞进来的东西 ——
+   大位移在手机上会让人以为点错了、页面跳了。
+   手机上同一套：底部抽屉从下方略抬一下，观感一致。 */
+@keyframes dlgIn{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes dlgFade{from{background:rgba(16,24,39,0)}to{background:rgba(16,24,39,.45)}}
+dialog[open]{animation:dlgIn .3s var(--ease-out-expo) both}
+dialog[open]::backdrop{animation:dlgFade .3s ease both}
+/* backdrop-filter 在 Safari 上一路都要 -webkit- 前缀（无前缀直到 Safari 18 才支持），
+   两行都写：不认识的一行被忽略，认识的那行生效。 */
+dialog::backdrop{background:rgba(16,24,39,.45);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.dialogHead{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3);padding:var(--sp-5) var(--sp-5) var(--sp-3);flex:0 0 auto}
+.dialogHead h2{margin:0;font-size:var(--fs-lg)}
+.x{width:32px;height:32px;flex:0 0 auto;border:1px solid var(--line);background:var(--surface-3);color:var(--text);border-radius:var(--r-sm);font-size:18px;cursor:pointer;line-height:1;transition:transform .2s var(--ease-out-back),background .2s ease}
+.x:hover{background:var(--accent-soft);color:var(--accent-ink);transform:rotate(90deg)}
+/* 弹窗正文统一走这个容器：既能滚，又不会被 .dialogHead 的 padding 影响 */
+.dlgBody{flex:1 1 auto;min-height:0;overflow:auto;padding:0 var(--sp-5) var(--sp-5);display:flex;flex-direction:column;gap:var(--sp-3)}
+.dlgBody>form{display:flex;flex-direction:column}
+.switch{text-align:center;color:var(--muted);font-size:var(--fs-sm);margin:0 0 var(--sp-2)}
+.switch a{color:var(--accent2);font-weight:700}
+
+/* 表单字段块：把 label + 工具栏 + 预览 + 提示捆成一组，组内不要额外外边距 */
+.field{margin:var(--sp-4) 0}
+.field>label{margin:0}
+
+.setCard{border:1px solid var(--line);border-radius:var(--r-md);padding:var(--sp-4);background:var(--surface-2)}
+.setCard h3{margin:0 0 4px;font-size:var(--fs-md)}
+.setCard .muted{margin:0 0 var(--sp-1)}
+.setCard hr{border:0;border-top:1px solid var(--line);margin:var(--sp-3) 0}
+.setCard label{margin:var(--sp-3) 0}
+.hrRow{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-start;margin-top:var(--sp-2)}
+
+/* 危险区：浅底深字 + 红色语义标记，不靠满屏饱和红去喊。
+   配色全部走令牌，深浅两套由 --danger-* 决定。
+   注意 .danger 既是按钮类也用在卡片上（class="setCard danger"）——
+   所以按钮规则一律钉在 button 上，否则整张卡片会被当成按钮排版。 */
+.setCard.danger{border-color:var(--danger-line);border-left:4px solid var(--danger);background:var(--danger-soft)}
+.setCard.danger h3{color:var(--danger-ink)}
+.setCard.danger .muted{color:var(--danger-text)}
+.setCard.danger b{color:var(--danger-ink)}
+.setCard.danger label{color:var(--text)}
+.setCard.danger hr{border-top-color:var(--danger-line)}
+.setCard.danger input{background:var(--card-solid);border-color:var(--danger-edge);color:var(--text)}
+/* 聚焦环也要退路：color-mix 不支持的话这条整条丢掉，键盘用户就看不到焦点在哪了 */
+.setCard.danger input:focus{border-color:var(--danger);box-shadow:0 0 0 4px var(--ring);
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--danger) 22%,transparent)}
+/* 管理员不能注销自己：表达成中性的「不可用」，而不是继续喊红色 */
+.setCard.danger.is-locked{background:var(--surface-2);border-color:var(--line);border-left-color:var(--line-2);box-shadow:none}
+.setCard.danger.is-locked h3,.setCard.danger.is-locked b{color:var(--text)}
+.setCard.danger.is-locked .muted{color:var(--muted)}
+
+/* 2FA 二维码 */
+.qrWrap{display:flex;justify-content:center;align-items:center;padding:var(--sp-3);background:var(--card-solid);border:1px solid var(--line);border-radius:var(--r-md);min-height:60px}
+.qrWrap canvas,.qrWrap img{image-rendering:pixelated;border-radius:var(--r-sm);display:block}
+#qrFallback{margin:0;text-align:center}
+.secretRow{display:flex;align-items:center;gap:var(--sp-2)}
+.secretRow code{flex:1;min-width:0;background:var(--surface-2);border:1px dashed var(--line);border-radius:var(--r-sm);
+  padding:9px 11px;font-size:var(--fs-xs);word-break:break-all;letter-spacing:.06em;color:var(--text)}
+
+/* Toast：必须是**顶层**图层。
+   普通 z-index 打不过 dialog —— <dialog> 打开时整个元素连同 ::backdrop 都在 top layer，
+   那里 z-index 是无效的。所以 toast 用 popover 属性，自己进 top layer，
+   保证「弹窗里报错」时提示不会被遮住（这正是「错误提示不在同一个图层」的根因）。 */
+#toast{
+  position:fixed;inset:auto;left:50%;bottom:var(--sp-5);margin:0;
+  width:max-content;max-width:min(92vw,560px);overflow:visible;
+  border:0;padding:11px var(--sp-4);border-radius:var(--r-md);
+  background:#171b2d;color:#fff;font-size:var(--fs-md);font-weight:600;line-height:1.5;
+  box-shadow:0 18px 44px rgba(12,18,36,.4);
+  opacity:0;transform:translate(-50%,20px);pointer-events:none;z-index:40;
+  transition:opacity .26s var(--ease-out-expo),transform .5s var(--ease-out-back);
+}
+#toast.show{opacity:1;transform:translate(-50%,0);animation:toastPop .46s var(--ease-out-back) both}
+@keyframes toastPop{0%{opacity:0;transform:translate(-50%,26px) scale(.94)}100%{opacity:1;transform:translate(-50%,0) scale(1)}}
+/* 带「撤销」按钮的提示条（删除后的后悔药）：排成一行，并且要能点 ——
+   #toast 平时是 pointer-events:none（不然它会挡住底下的内容），
+   只有这一种带动作的提示才把指针事件打开。 */
+#toast.hasAct{pointer-events:auto;display:flex;align-items:center;gap:var(--sp-3)}
+.toastMsg{min-width:0;overflow-wrap:anywhere}
+.toastAct{
+  flex:0 0 auto;height:28px;padding:0 12px;border-radius:var(--r-pill);
+  border:1px solid rgba(255,255,255,.45);background:transparent;color:#fff;
+  font-size:var(--fs-sm);font-weight:700;line-height:1;cursor:pointer;
+  transition:background .2s ease,transform .18s var(--ease-out-back);
+}
+.toastAct:hover{background:rgba(255,255,255,.18)}
+.toastAct:active{transform:scale(.94)}
+.toastAct:focus-visible{outline:2px solid #fff;outline-offset:2px}
+
+/* ---- 导航抽屉（左上角菜单）----
+   常驻 DOM，靠 .open 切换：用 .hidden{display:none} 是没法做过渡的。
+   关闭态用 visibility:hidden 兜底 —— 抽屉滑出屏幕后依然在 DOM 里，
+   不藏起来键盘 Tab 还会走到那些按钮上。
+   遮罩常驻不透明度 0 + pointer-events:none，所以平时完全不挡点击。 */
+.navMask{
+  position:fixed;inset:0;z-index:18;
+  background:rgba(16,24,39,.42);
+  backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);
+  opacity:0;pointer-events:none;transition:opacity .32s ease;
+}
+.navMask.open{opacity:1;pointer-events:auto}
+.navDrawer{
+  position:fixed;top:0;bottom:0;left:0;z-index:19;
+  width:min(320px,86vw);display:flex;flex-direction:column;
+  background:var(--card-solid);border-right:1px solid var(--line);
+  transform:translateX(-102%);visibility:hidden;
+  transition:transform .42s var(--ease-out-expo),visibility .42s,box-shadow .3s ease;
+}
+.navDrawer.open{transform:none;visibility:visible;box-shadow:var(--shadow)}
+.navDrawerHead{
+  flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3);
+  padding:var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-4);border-bottom:1px solid var(--line);
+}
+.navDrawerTitle{font-size:var(--fs-md);font-weight:800;letter-spacing:.02em}
+.navDrawerBody{
+  flex:1 1 auto;min-height:0;overflow:auto;
+  /* iOS Safari 上只写 overflow:hidden 挡不住「橡皮筋」滚动，
+     抽屉里滚到底会带着整页一起动。overscroll-behavior 把滚动链掐断
+     （不支持的旧版只是没有这层保护，不会坏）。
+     注释里刻意不写大括号：有工具按大括号切 CSS 块，会被注释骗到。 */
+  overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+  padding:var(--sp-4) var(--sp-3) calc(var(--sp-5) + env(safe-area-inset-bottom));
+  display:flex;flex-direction:column;gap:var(--sp-5);
+}
+.navSecT{
+  margin:0 0 var(--sp-2);padding:0 var(--sp-3);
+  font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;
+}
+.navList{display:flex;flex-direction:column;gap:2px}
+/* 行是 flex：名字吃满剩余宽度并省略号，计数固定在右侧 ——
+   板块名长短不一时，右侧的计数依然落在同一条竖线上。 */
+.navItem{
+  display:flex;align-items:center;gap:var(--sp-2);width:100%;height:var(--h-lg);
+  padding:0 var(--sp-3);border:1px solid transparent;border-radius:var(--r-md);
+  background:transparent;color:var(--text);font-size:var(--fs-md);font-weight:700;
+  text-align:left;cursor:pointer;white-space:nowrap;
+  /* iOS 默认会给可点元素盖一层灰色高亮，按钮家族里统一写过了，
+     这个类是后加的，得自己带上 */
+  -webkit-tap-highlight-color:transparent;
+  transition:background .2s ease,border-color .2s ease,color .2s ease;
+}
+.navItem .navName{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.navTick{width:3px;height:16px;flex:0 0 auto;border-radius:2px;background:transparent;transition:background .2s ease}
+.navN{
+  flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;
+  min-width:22px;height:20px;padding:0 6px;border-radius:var(--r-pill);
+  background:var(--surface-3);color:var(--muted);font-size:11px;font-weight:700;
+}
+.navItem:hover{background:var(--surface-2);border-color:var(--line)}
+/* 选中态写在 hover 之后：两者特异性相同，靠顺序取胜。
+   计数徽标换成实心主题色 —— 和主按钮 / 选中的档位按钮同一套语言。 */
+.navItem.on{background:var(--accent-soft);color:var(--accent-ink)}
+.navItem.on .navTick{background:var(--accent2)}
+.navItem.on .navN{background:var(--btn-bg);color:var(--btn-fg)}
+.navEmpty{margin:0;padding:0 var(--sp-3);color:var(--muted);font-size:var(--fs-sm)}
+.navAdd{width:100%;height:var(--h-md);margin-top:var(--sp-3)}
+/* 抽屉打开时条目逐次进场。动画只在 .open 上挂着 ⇒ 每次打开都重播，
+   关闭时随抽屉一起滑走，不用额外清理。 */
+@keyframes navItemIn{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:none}}
+.navDrawer.open .navItem,.navDrawer.open .navAdd{
+  animation:navItemIn .34s var(--ease-out-expo) both;
+  animation-delay:calc(var(--i,0) * 28ms);
+}
+/* 抽屉开着时锁住背景滚动。
+   只写 overflow:hidden 在 **iOS Safari 上没用** —— 橡皮筋照样能把整页带动，
+   于是「抽屉里滚到底」会变成「整页跟着滚」。所以这里连 position:fixed 一起用：
+   把 body 钉住、用 top 补偿当前滚动位置（数值由 JS 记下 / 还原）。
+   副作用是桌面端滚动条消失会让内容横跳一下 —— 由 html 上的
+   scrollbar-gutter:stable 把槽位提前留出来。 */
+body.navOpen{position:fixed;left:0;right:0;width:100%;overflow:hidden}
+
+/* ---- 外观设置：配色方案选择器 ---- */
+.palettePicker{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:var(--sp-2);margin-top:var(--sp-2)}
+.palOpt{
+  display:flex;flex-direction:column;align-items:flex-start;gap:6px;
+  padding:var(--sp-2) 10px;border:1px solid var(--line);border-radius:var(--r-md);
+  background:var(--card-solid);color:var(--text);cursor:pointer;font-size:var(--fs-xs);font-weight:700;
+  transition:border-color .2s ease,transform .18s var(--ease-out-back),box-shadow .25s var(--ease-out-expo);
+}
+.palOpt:hover{transform:translateY(-2px);border-color:var(--line-2)}
+/* 同样是 color-mix 的退路：不支持时至少还有一圈 --ring 描边，
+   不至于「选中的那套配色看起来跟没选一样」。 */
+.palOpt.on{border-color:var(--sw);box-shadow:0 0 0 3px var(--ring);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--sw) 26%,transparent)}
+.palDots{display:flex;gap:4px}
+.palDots i{width:14px;height:14px;border-radius:50%;display:block}
+.segRow{display:flex;gap:6px;margin-top:var(--sp-3);flex-wrap:wrap}
+.segBtn{height:var(--h-sm);padding:0 var(--sp-3);border:1px solid var(--line);background:var(--card-solid);color:var(--text);border-radius:var(--r-pill);font-size:var(--fs-sm)}
+.segBtn.on{background:var(--btn-bg);color:var(--btn-fg);border-color:var(--btn-bg)}
+
+/* ============ 7. Markdown ============ */
+/* 输入先 esc 再解析，所以正文里不可能出现标签。
+   注意 white-space 必须是 normal —— pre-wrap 会把块之间的换行渲染成多余空行。 */
+.postBody{white-space:normal;line-height:1.75;overflow-wrap:anywhere;font-size:var(--fs-md)}
+.postBody>*:first-child{margin-top:0}
+.postBody>*:last-child{margin-bottom:0}
+.postBody p{margin:0 0 10px}
+.postBody h1,.postBody h2,.postBody h3,.postBody h4,.postBody h5,.postBody h6{margin:var(--sp-4) 0 var(--sp-2);line-height:1.35}
+.postBody h1{font-size:23px}.postBody h2{font-size:20px}.postBody h3{font-size:17px}
+.postBody h4,.postBody h5,.postBody h6{font-size:15px}
+.postBody ul,.postBody ol{margin:0 0 10px;padding-left:22px}
+.postBody li{margin:3px 0}
+.postBody blockquote{margin:10px 0;padding:var(--sp-2) var(--sp-3);border-left:3px solid var(--line-2);
+  background:var(--surface-2);border-radius:0 var(--r-sm) var(--r-sm) 0;color:var(--muted)}
+.postBody blockquote>*:last-child{margin-bottom:0}
+.postBody code{background:var(--surface-3);padding:2px 6px;border-radius:6px;font-size:.92em;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.postBody a{color:var(--accent2);text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere}
+.postBody hr{border:0;border-top:1px solid var(--line);margin:var(--sp-3) 0}
+.mdCode{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-md);padding:var(--sp-3);overflow-x:auto;margin:10px 0}
+.mdCode code{background:none;padding:0;font-size:var(--fs-sm);white-space:pre}
+.mdTable{overflow-x:auto;margin:10px 0}
+.mdTable table{border-collapse:collapse;font-size:var(--fs-sm);min-width:100%}
+.mdTable th,.mdTable td{border:1px solid var(--line);padding:7px 11px;text-align:left}
+.mdTable th{background:var(--surface-2);font-weight:700}
+
+/* ---- 编辑器工具栏 ----
+   按钮上写中文而不是纯图标：B / I / S / </> 这类只有写惯 Markdown 的人认得出，
+   新手第一眼只会看到一排符号。标签本身还把效果演示出来（加粗是粗体、
+   斜体是斜体、删除线带删除线），配合 title 里的语法提示，不用查文档。
+   按钮用 onmousedown 阻止默认行为，否则点一下 textarea 就失焦、选区被清空。 */
+.mdBar{display:flex;flex-wrap:wrap;gap:4px;padding:6px;margin-top:7px;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-md)}
+.mdBtn{height:28px;padding:0 9px;border-radius:var(--r-xs);border:1px solid transparent;
+  background:transparent;color:var(--text);font-size:var(--fs-xs);font-weight:600;white-space:nowrap}
+.mdBtn:hover{background:var(--surface-3);border-color:var(--line)}
+.mdBtn b{font-weight:800}
+.mdBtn i{font-style:italic;font-family:Georgia,serif}
+.mdBtn s{text-decoration:line-through}
+.mdBtn code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.94em;background:none;padding:0}
+.mdBtn.on{background:var(--btn-bg);color:var(--btn-fg);border-color:var(--btn-bg)}
+/* 「预览」和「＋ 图片/视频/音频」是动作不是格式，和左边一排区分开。
+   上传那个是 <label for>，靠浏览器原生触发文件选择器 —— 不能用 JS 调 .click()，
+   部分移动浏览器会判成「非用户手势」而静默失效。 */
+.mdBtn.act,.mdBtn.upBtn{color:var(--accent2)}
+.mdBtn.act:hover,.mdBtn.upBtn:hover{border-color:var(--accent2)}
+.mdBar .sp{flex:1 1 auto;min-width:0}
+.mdPreview{margin-top:7px;padding:var(--sp-3);border:1px dashed var(--line);border-radius:var(--r-md);background:var(--card-solid);min-height:80px}
+.mdPreview .muted{display:block;text-align:center;padding:var(--sp-4) 0}
+.fieldHint{font-size:var(--fs-xs);color:var(--muted);margin-top:6px;display:flex;justify-content:space-between;gap:var(--sp-2);flex-wrap:wrap}
+
+/* ============ 8. 响应式 ============ */
+@media(max-width:900px){
+  .admin{grid-template-columns:1fr}
+}
+@media(max-width:720px){
+  :root{--h-md:36px}
+  header{height:56px;gap:var(--sp-2)}
+  .hLeft{gap:var(--sp-2)}
+  .brandText small{display:none}
+  .logo{width:32px;height:32px;border-radius:var(--r-sm);font-size:15px}
+  .brandText b{font-size:16px}
+  main{padding:var(--sp-4) var(--sp-3) var(--sp-6)}
+  .hero{display:block;margin:0 0 var(--sp-4);position:relative}
+  .hero h1{font-size:20px;margin:6px 0 0}
+  /* 手机上把统计挪到 pill 的同一行（绝对定位到右上角）：
+     原来它自己独占一行，首屏就被 hero 吃掉 110px 左右，
+     而「几个主题」这件事远没有第一张卡片重要。 */
+  .hero .stats{position:absolute;top:0;right:0;margin:0;padding:4px 9px}
+  .hero .stats b{font-size:15px}
+  /* pill 里可能是很长的板块名，压住它免得和右上角的统计叠在一起 */
+  .hero .pill{max-width:calc(100% - 88px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hero p{display:none}                 /* 首页那句介绍在手机上纯占位，正文更重要 */
+  .stats{margin-top:var(--sp-2);padding:6px 10px;width:max-content;gap:6px}
+  .stats b{font-size:16px}
+  /* 看帖子 / 主页 / 管理中心时，把首页那套装饰收起来 ——
+     不然手机上首屏一半是 hero 和板块栏，正文要滚一大段才出现。
+     真正的规则在下面单独写（宽度窄**或**高度矮都算小屏），这里不再重复。 */
+  .thread{padding:var(--sp-3) var(--sp-4);border-radius:var(--r-md)}
+  .thread h3{font-size:15px}
+  .post{padding:var(--sp-4);border-radius:var(--r-md)}
+  .post.nested{margin-left:calc(var(--depth,1) * 9px)}
+  .postBody{font-size:var(--fs-md)}
+  .thumb,.thumbVideo{width:62px;height:62px}
+  .chip{height:30px;padding:0 11px;font-size:var(--fs-xs)}
+  .searchRow input{max-width:none}
+  .userBtn{max-width:120px}
+  .moveRow select{min-width:120px;flex:1 1 auto}
+  .pager{gap:var(--sp-2)}
+  .pageBtn{padding:0 var(--sp-3);font-size:var(--fs-sm)}
+  .avaBig{width:54px;height:54px;font-size:24px}
+  .profile{padding:var(--sp-4);gap:var(--sp-3)}
+  .profile h2{font-size:18px}
+  .adminCard{padding:var(--sp-3) var(--sp-4)}
+  /* 管理行在手机上改成上下两段：先「头像 + 名字 + 标签」，按钮组另起一行右对齐。
+     左右并排时按钮组要吃掉 200 多像素，左边的标签被挤成一行一个字，
+     看着像乱码（管理员那行还更挤）。 */
+  .adminCard .row{grid-template-columns:minmax(0,1fr);gap:7px}
+  .adminCard .rowActions{justify-content:flex-end}
+  .searchRow .mini{padding:0 var(--sp-3)}
+  /* 投票：手机上选项是主要触控目标，30px 太容易点串行 */
+  .pollCard{padding:var(--sp-3)}
+  .pollOpt{min-height:38px}
+  /* 选项行：序号 + 输入框 + 删除按钮三件并排，窄屏时输入框不能再要 flex:1 之外的余量 */
+  .pollOptRow input{min-width:0}
+}
+/* 手机上把弹窗改成底部抽屉：拇指够得着，长表单也不用在小框里滚 */
+@media(max-width:560px){
+  dialog{
+    width:100%;max-width:100%;margin:0;
+    inset:auto 0 0 0;
+    border-radius:var(--r-xl) var(--r-xl) 0 0;
+    max-height:92vh;max-height:92dvh;
+  }
+  dialog[open]::before{content:'';display:block;width:38px;height:4px;border-radius:var(--r-pill);
+    background:var(--line-2);margin:var(--sp-2) auto 0;flex:0 0 auto}
+  .dialogHead{padding:var(--sp-3) var(--sp-4) 6px}
+  .dlgBody{padding:0 var(--sp-4) calc(var(--sp-4) + env(safe-area-inset-bottom))}
+  .postActions{justify-content:flex-end}
+  /* 弹窗里的主提交按钮吸底：手机上填完表单不用再滚一段去找「发布」。
+     只认直接子元素，所以设置页里那一堆卡片内的保存按钮不受影响。
+     ⚠️ sticky 的偏移基准是**内容盒**，底部那 16px 内边距不算在内 ——
+        只写 bottom:0 的话，正文会从按钮下面露出半截字（实测 elementFromPoint
+        命中的是 P 而不是按钮）。所以额外铺一条实色 ::after 把这段盖住；
+        用负 bottom 把它推下去是不行的：iOS 安全区一变大按钮就会被弹窗裁掉。 */
+  .dlgBody>.primary.wide:last-of-type{
+    position:sticky;bottom:0;z-index:2;
+    box-shadow:0 -10px 12px -8px rgba(0,0,0,.18);
+  }
+  .dlgBody>.primary.wide:last-of-type::after{
+    content:'';position:absolute;left:0;right:0;top:100%;height:200px;
+    background:var(--card-solid);
+  }
+  /* 触控目标放大到 34px：30px 的按钮在触屏上偏小，
+     拇指点「赞」和「转帖」经常串台。 */
+  .mini{height:34px}
+  .act{height:34px;padding:0 12px;gap:6px}
+  /* 一排操作按钮不再拉伸。按钮多到折行时，flex:1 会让落单的那颗
+     变成横贯整行的宽按钮 —— 又丑又容易误点（站主看着最多，最容易撞上）。 */
+  .postActions .mini{flex:0 0 auto;padding:0 14px}
+  /* 编辑器工具栏改成一行横滑：14 个按钮堆起来要占三行、近半个抽屉，
+     而且行尾那颗宽度随字数乱跳。横滑一行 + 末尾留白暗示「还能往右滑」。 */
+  .mdBar{
+    flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;
+    -webkit-overflow-scrolling:touch;scrollbar-width:none;
+  }
+  .mdBar::-webkit-scrollbar{display:none}
+  .mdBar>*{flex:0 0 auto}
+  .mdBar::after{content:'';flex:0 0 10px}
+  /* 手机上回复框收成一行，点一下才展开（见上面 .replyBox 的说明） */
+  .replyBox{padding:var(--sp-2)}
+  .replyBox.collapsed{gap:0}
+  .replyBox.collapsed>.replyOpen{
+    display:flex;align-items:center;width:100%;height:var(--h-md);padding:0 var(--sp-3);
+    border:1px dashed var(--line-2);border-radius:var(--r-md);
+    background:transparent;color:var(--muted);font-size:var(--fs-sm);font-weight:600;
+    text-align:left;cursor:pointer;
+  }
+  .replyBox.collapsed>.replyOpen::before{content:'＋';margin-right:6px;color:var(--accent2);font-weight:800}
+  .replyBox.collapsed>:not(.replyOpen){display:none}
+  /* 编辑器工具栏在手机上是一行横滑，不必再为「两行排得下」把高度压到 26px ——
+     26px 的触控目标手指点不准（多比例体检里一堆组合报它偏小）。
+     高度给到 32px，宽度靠 padding 收着，一屏仍能看到五六个按钮。 */
+  .mdBtn{height:32px;padding:0 9px}
+  /* 窄屏：板块按钮独占一行、搜索行再占一行，
+     免得两颗控件并排时都被压成「一个字宽」 */
+  /* 板块筛选：宽度贴着文字，不要拉伸填满一整行 ——
+     拉满之后它长得跟下面的搜索框一模一样，一眼看不出「这是个按钮」。
+     搜索框仍然独占一行（两颗控件硬挤在一行会被压成「一个字宽」）。 */
+  .chip.pickChip{max-width:none;flex:0 1 auto;padding:0 var(--sp-3)}
+  .filterRow .searchRow{flex:1 1 100%}
+  .navDrawer{width:min(320px,88vw)}
+}
+@media(max-width:380px){
+  .userBtn b{display:none}
+}
+
+/* ---- 小屏的两种形态，一起处理 ---- ----
+   以前「手机排版」一律按宽度判断，于是 844×390 的手机横屏被当成桌面：
+   hero 照占 250px、详情页也收不起板块栏，首屏只剩一条缝。
+   宽度窄 **或** 高度矮，都是小屏。 */
+@media(max-width:900px),(max-height:600px){
+  [data-view="thread"] .hero,[data-view="user"] .hero,[data-view="admin"] .hero,
+  [data-view="thread"] .boardBar,[data-view="user"] .boardBar,[data-view="admin"] .boardBar{display:none}
+  [data-view="thread"] main,[data-view="user"] main,[data-view="admin"] main{padding-top:var(--sp-2)}
+}
+/* 手机横屏：竖向只剩三百多像素，hero 压成一行 ——
+   列表页也一样，首屏要把位置还给内容。 */
+@media(orientation:landscape) and (max-height:560px){
+  .hero{display:flex;align-items:center;gap:var(--sp-3);margin:0 0 var(--sp-3);position:relative}
+  .hero>div{display:flex;align-items:center;gap:var(--sp-4);min-width:0}
+  .hero h1{font-size:17px;margin:0}
+  .hero p{display:none}
+  .hero .pill{display:none}
+  .hero .stats{position:absolute;top:0;right:0;margin:0;padding:3px 9px}
+  .hero .stats b{font-size:15px}
+  main{padding-top:var(--sp-3)}
+}
+/* 平板与手机横屏这一档：内容不该拉满整屏。
+   768 宽的卡片一行能塞 40+ 个汉字，视线横扫很累（中文 30-40 字一行最好读）。
+   桌面那档的 --maxw（1060）在这个宽度区间不生效，所以要单独给一档。 */
+@media(min-width:720px) and (max-width:900px){ main{max-width:680px} }
+@media(min-width:900px) and (max-width:1080px){ main{max-width:840px} }
+
+/* ---- 触屏没有「悬停」这回事 ----
+   iOS / Android 会把 :hover 粘住到下一次点击，于是：
+   点过的卡片一直抬着（transform:translateY(-3px) 不还原）、关闭按钮一直歪着（rotate 90deg）、
+   头像一直放大着 —— 看着就像「布局错了 / 比例失调」，其实是一个不存在的状态被留住了。
+   规范做法是把每条 hover 规则包进 @media(hover:hover)，本文件有 16 条带位移的规则，
+   包裹一遍改动面太大、也容易漏。所以反过来写：在没有悬停能力的设备上，
+   把「位移 / 缩放 / 旋转 / 浮起阴影」这些复活一遍。
+   颜色变化（背景变浅、边框变主题色）故意留着 —— 那正好是「按下」的反馈。 */
+@media(hover:none){
+  .primary:hover,.ghost:hover,.mini:hover,.iconBtn:hover,.userBtn:hover,.navBtn:hover,
+  .chip:hover,.pageBtn:hover:not(:disabled),.back:hover,.avaLink:hover,
+  .quoteCard:hover,.palOpt:hover,.x:hover,.thread:hover{
+    transform:none;
+  }
+  .ghost:hover,.chip:hover{box-shadow:var(--shadow-sm)}
+  .thread:hover{box-shadow:var(--shadow-sm);border-color:var(--line)}
+  /* ⚠️ 上面把 transform 一键清了，连「按下」的反馈也一起清了 ——
+     这些规则写在文件更前面，被这个后写的块压住。
+     触屏上 :active 才是真正的按下反馈，所以在这里还回去。 */
+  .primary:active,.ghost:active,.mini:active,.pageBtn:active,.chip:active,.act:active{transform:scale(.96)}
+  .thread:active{transform:translateY(-1px) scale(.995)}
+}
+
+/* 无障碍：尊重系统的「减少动态效果」偏好 */
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+  .thread:hover{transform:none}
+  /* ::backdrop 不匹配上面的 *，得点名关掉；否则「减少动态效果」下
+     弹窗本身不动了，背景那层遮罩还在自己淡入。 */
+  dialog[open],dialog[open]::backdrop{animation:none}
+}
