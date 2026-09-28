@@ -100,6 +100,16 @@ const BODY = `
       <p>泡了杯茶，随手翻了翻旧相册。</p>
       <div class="meta"><span>小铃</span><span>2026年9月19日 09:12</span><span>0 回复</span></div>
     </article>
+    <!-- 匿名内容：空白头像 + 不可点的「匿名用户」。名字这一格不能压暗，
+         它是「谁在说话」那一栏里唯一的字（压暗了就是可读性事故）。 -->
+    <article class="thread">
+      <div class="threadTop"><span class="tag board">闲聊</span></div>
+      <h3>一条匿名帖</h3>
+      <p>匿名发出来的内容也要读得清。</p>
+      <div class="meta"><span class="avaLink avaAnonLink"><span class="ava avaMini avaAnon"></span></span><span class="linkName anonName">匿名用户</span><span>2026年9月19日 10:00</span><span>0 回复</span></div>
+      <!-- 敏感帖里的投票摘要要一起糊掉（以前这里是明文漏出来的） -->
+      <div class="pollMini blurLock"><svg class="pollIco" viewBox="0 0 24 24"><path d="M4 20.5h4.2V11H4z"/></svg><b>凶手是不是他？</b><span class="muted">3 人参与 · 单选</span><span class="pollMiniGo">去投票 →</span></div>
+    </article>
   </div>
 
   <div class="view">
@@ -160,6 +170,10 @@ const BODY = `
         </div>
         <div class="postActions"><button class="mini">回复</button><button class="mini danger">删除</button></div>
       </article>
+      <article class="post">
+        <div class="postHead"><span class="avaLink avaAnonLink"><span class="ava avaAnon"></span></span><div class="postWho"><b class="linkName anonName">匿名用户</b><small>#2 · 2026年9月20日 19:20</small></div></div>
+        <div class="postBody">匿名回复：头像留空、名字不可点。</div>
+      </article>
       <article class="post nested" style="--depth:1">
         <div class="replyTo">正在回复 #1 <button class="mini" type="button">取消</button></div>
         <div class="postBody">补上媒体与禁用态。视频、音频、加载中、加载失败四种都要能看清占位样式。</div>
@@ -182,6 +196,7 @@ const BODY = `
       <div class="progress"><i style="width:40%"></i></div>
       <div class="upRow"><span class="upTip muted">正在上传 2/3 · 46%</span><button class="mini" type="button">取消</button></div>
       <div class="upRow"><span class="upTip muted">正在保存到存储…（2/3）</span><button class="mini" type="button">取消</button></div>
+      <label class="checkRow slim"><input type="checkbox" checked> 匿名回复（不记录发布者，发出后无法自行修改或删除）</label>
       <textarea placeholder="这条主题已被锁定，无法回复" disabled></textarea>
       <input placeholder="禁用的输入框也要读得出占位文字" disabled>
       <div class="rowActions end"><span class="muted">已恢复上次未发送的草稿</span><button class="primary">回复</button></div>

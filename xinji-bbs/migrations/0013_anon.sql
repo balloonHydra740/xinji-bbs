@@ -1,0 +1,30 @@
+-- 0013 匿名发布：threads / posts 的 is_anon 标记 + 系统「匿名用户」账号
+--
+-- 【无损】
+--   只给 threads / posts 各加一个带 DEFAULT 0 的新列，不改已应用的迁移、不删列、不动数据。
+--   老库补齐后所有历史内容 is_anon=0，行为与升级前一模一样。
+--
+-- 【⚠️ 必须排在 widenRoleConstraint 之后】
+--   widen 会用写死的建表语句重建 threads / posts，再从 snap_* 回填。
+--   若在它之前加列，`INSERT INTO posts SELECT * FROM snap_posts` 会因为两边列数不等
+--   直接报错、整批回滚 —— 角色约束就永远放宽不了（0007/0008/0012 踩过同一个坑）。
+--   所以 ensureAnon() 挂在 ensureTerms() 之后，是自愈链的最后一环。
+--
+-- 【匿名是怎么做到「库里也查不出是谁发的」】
+--   threads.author_id / posts.author_id 是 NOT NULL + 外键，塞不进空值；
+--   而且真让它们为空就得重建表（风险远大于收益）。这里的做法是：
+--   匿名内容的 author_id 一律指向一个**系统账号**「匿名用户」，
+--   该账号的 password_hash 是一串随机数的哈希 —— 原文谁都不知道，永远登不进去。
+--   于是：
+--     · 数据库里没有任何一列能把匿名内容和真实用户关联起来（连站主也查不到）；
+--     · JOIN users 天然得到 username='匿名用户'、avatar 为空，输出层不用额外兜底；
+--     · 作者本人也改不动 / 删不掉自己的匿名帖（author_id 不是他）——
+--       这正是「真匿名」的代价：找不到主人，就没有主人权限。
+--     · 站主仍可通过「管理面板 → 删帖」或帖子页的治理按钮删除违规匿名内容。
+--
+-- 【is_anon 这一列有什么用】
+--   author_id 已经能说明问题，但它表达的是「指向系统账号」这个**实现细节**。
+--   输出层要靠它做两件事：把 author_id 下发成 0（前端据此不渲染「点进主页」的链接），
+--   以及把头像换成空白。分开存一列，将来换实现（比如换成空作者）也不必再动前端。
+ALTER TABLE threads ADD COLUMN is_anon INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE posts   ADD COLUMN is_anon INTEGER NOT NULL DEFAULT 0;

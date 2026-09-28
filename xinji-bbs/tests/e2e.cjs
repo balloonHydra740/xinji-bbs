@@ -74,6 +74,18 @@ async function main() {
   const block = src.slice(src.indexOf('/* ---------------- TOTP'), src.indexOf('/* ---------------- 会话与鉴权'));
   const totp = new Function('crypto', consts + '\n' + block + '\nreturn {totpAt};')(require('crypto').webcrypto);
 
+  // 0012 起有「用户协议」门槛：没签过当前版本的用户一律 403，连发帖都发不了。
+  // 真实前端是在注册页上勾了同意才点得动注册按钮的（请求体里带 terms_version），
+  // 测试里也照这个来 —— 否则每个用例开头都要手工补一次同意，噪音比覆盖大。
+  // 版本号从 settings 现读：站主在测试里改过协议（terms-check 那种场景）也能跟上。
+  const termsVersion = (env) => {
+    try {
+      const row = env.DB.db.prepare(`SELECT value FROM settings WHERE key='terms_version'`).get();
+      const n = Number(row && row.value);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
+    } catch (e) { return 1; }   // 极老库还没有 settings 表 —— 那就是默认第 1 版
+  };
+
   const mkCaller = (env) => {
     let cookie = '', seq = 0;
     return async (p, o = {}) => {
@@ -81,6 +93,11 @@ async function main() {
       // 本地 Request 没有真实的 cf-connecting-ip，所有请求会落进同一个限流 key
       // 互相干扰。注册时给一个递增的假出口 IP，模拟「不同访客各自注册」。
       if (!h['cf-connecting-ip'] && p === '/api/register') h['cf-connecting-ip'] = `203.0.113.${(seq++ % 250) + 1}`;
+      // 注册请求：没显式指定就补上当前协议版本，等价于「注册页上同意过」
+      if (p === '/api/register' && o.body && typeof o.body === 'object' && !(o.body instanceof Uint8Array)
+          && !('terms_version' in o.body)) {
+        o = { ...o, body: { ...o.body, terms_version: termsVersion(env) } };
+      }
       if (cookie) h['Cookie'] = cookie;
       // 上传接口要的是**文件裸字节**，不能走 JSON.stringify（会把 Uint8Array 变成对象字面量）
       const isRaw = o.body instanceof Uint8Array || o.body instanceof ArrayBuffer;
@@ -472,6 +489,19 @@ async function main() {
     ok('E6 会话未丢失', old.prepare('SELECT COUNT(*) c FROM sessions WHERE user_id=2').get().c === 1);
     ok('E7 待验证票据未丢失', old.prepare('SELECT COUNT(*) c FROM pending_2fa WHERE user_id=3').get().c === 1);
     ok('E8 外键声明仍然存在（未丢约束）', old.prepare('PRAGMA foreign_key_list(posts)').all().length > 0);
+
+    /* 0012 的老库用户必然 terms_version=0 —— 补列时的默认值。
+       这不是 bug，是设计：协议是新加的，谁都没签过，升级后第一次进门必须重新确认。
+       把「老用户被协议墙挡住」钉成断言，免得以后有人手贱把默认值改成当前版本，
+       搞得「新加的协议悄悄替全站老用户签了字」还没人发现。 */
+    {
+      const before = old.prepare('SELECT terms_version FROM users WHERE id=2').get().terms_version;
+      ok('E8b 老库用户升级后 terms_version 为 0（都没签过新协议）', Number(before) === 0, 'got=' + before);
+      // 授权他一次，后续用例才走得下去（真实流程里是本人去点「同意并继续」）
+      // settings 里可能压根没有 terms_version 这一行（站主没改过协议）—— 那就取默认第 1 版
+      old.prepare(`UPDATE users SET terms_version=COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key='terms_version'),1) WHERE id=2`).run();
+      ok('E8c 同意后放行', Number(old.prepare('SELECT terms_version FROM users WHERE id=2').get().terms_version) >= 1);
+    }
 
     // 升级后可正常任命子管理员（用真实密码哈希，验证升级没破坏认证）
     r = await callE('/api/login', { method: 'POST', body: { username: 'admin', password: 'admin12345' } });

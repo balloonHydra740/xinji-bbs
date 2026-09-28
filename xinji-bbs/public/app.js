@@ -36,7 +36,20 @@ const toast=(s,action)=>{
   clearTimeout(toastTimer);
   toastTimer=setTimeout(hideToast, hasAct?5200:2200);
 };
-const api=async(p,o={})=>{const r=await fetch('/api'+p,{headers:{'content-type':'application/json',...(o.headers||{})},...o});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'请求失败');return d};
+/* 「没同意当前协议」时，服务端对所有需要登录的接口一律回 403 need_terms。
+   这里顺手把协议墙顶上来 —— 用户该看到的是协议本身，而不是一句「需要先同意用户协议」
+   然后对着满屏报错发懵（典型场景：另一个标签页里站主刚改了协议）。 */
+const api=async(p,o={})=>{
+  const r=await fetch('/api'+p,{headers:{'content-type':'application/json',...(o.headers||{})},...o});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){
+    if(d.need_terms&&typeof window!=='undefined'&&window.__openTermsWall){
+      try{ window.__openTermsWall() }catch(e){}
+    }
+    throw Error(d.error||'请求失败');
+  }
+  return d;
+};
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 // 单个附件 → 真正的媒体元素。
 // att 是后端给的元数据表 { id: {mime,w,h} }：
@@ -134,6 +147,195 @@ function renderBody(s, att, plain){
   return MD.toHtml(text).replace(/IMG(\d+)/g, (m, i) => mediaHtml(ids[Number(i)], att, hasIndex));
 }
 
+/* ---- 用户协议（0012）----
+   模型只有两句话：站主改一次协议 ⇒ 版本号 +1；每个用户存「我同意到哪一版」。
+   没签过当前版本 ⇒ 一堵**关不掉**的墙，签完才继续加载站内内容；不同意直接离开本站。
+   已登录用户以服务端为准（换设备 / 换浏览器都跟着走）；游客服务端没地方记，
+   所以本地记版本 —— 游客就算手改 localStorage，能看到的也只是本来就公开的帖子。 */
+const TERMS_LS='bbs_terms_ok';
+let termsCache=null, termsWallOn=false, termsResolve=null, curTermsVersion=0, termsAdminCache=null;
+
+function termsNeed(st){
+  if(!st||!st.terms) return false;
+  const v=Number(st.terms.version)||0;
+  if(me) return !st.terms.agreed;                       // 登录了：一切都听服务端的
+  return (Number(lsGet(TERMS_LS,'0'))||0)<v;            // 游客：本地记
+}
+async function loadTerms(force){
+  if(termsCache&&!force) return termsCache;
+  termsCache=await api('/terms');
+  return termsCache;
+}
+// 协议正文走 renderBody（先 esc 再 Markdown）：协议是站主写的，但照样不直接插 HTML ——
+// 站主的账号也可能被别人代管，不该因为「是他自己写的」就少这一道转义。
+function fillTermsBody(sel,text){ const el=$(sel); if(el) el.innerHTML=renderBody(text,null,false) }
+
+function renderTermsWall(t){
+  fillTermsBody('#termsDlgBody',t.text);
+  const ver=$('#termsDlgVer');
+  if(ver) ver.textContent='v'+t.version+(t.updated_at?' · 更新于 '+time(t.updated_at):'');
+  const foot=$('#termsDlgFoot');
+  if(foot) foot.textContent='当前版本 v'+t.version+'。协议更新后需要重新确认一次；不同意将无法使用本站。';
+}
+
+// 立墙。返回的 Promise 在用户点「同意」后 resolve；点「不同意」会直接离开本站，永远不 resolve。
+async function termsWall(){
+  const dlg=$('#termsDialog');
+  termsWallOn=true;
+  // 关不掉：没有 ×，Esc 走 cancel 事件这里拦掉，点背板原生就不会关闭。
+  if(dlg&&dlg.addEventListener&&!dlg.__wallBound){
+    dlg.__wallBound=true;
+    dlg.addEventListener('cancel',e=>{ e.preventDefault() });
+  }
+  try{
+    const t=await loadTerms(true);
+    curTermsVersion=t.version; renderTermsWall(t);
+  }catch(e){
+    const el=$('#termsDlgBody');
+    if(el) el.textContent='协议读取失败：'+(e.message||e)+'。请检查网络后重试。';
+  }
+  try{ dlg&&dlg.showModal&&dlg.showModal() }catch(e){}
+  return new Promise(r=>{ termsResolve=r });
+}
+// 任何请求收到 need_terms 时靠它把墙顶上来 —— 例如「另一个标签页里站主刚改了协议」，
+// 这时用户手里的页面已经过期，与其让他对着一串报错发懵，不如直接把新协议摆到他面前。
+window.__openTermsWall=()=>{ if(termsWallOn) return; termsWall().catch(()=>{}) };
+
+function finishTermsWall(){
+  termsWallOn=false;
+  try{ $('#termsDialog').close() }catch(e){}
+  const r=termsResolve; termsResolve=null; if(r) r(true);
+}
+
+window.agreeTerms=async()=>{
+  const btn=$('#termsAgreeBtn');
+  if(me){
+    const label=btn?btn.textContent:'同意';
+    if(btn){ btn.disabled=true; btn.textContent='提交中…' }
+    try{
+      await api('/terms/agree',{method:'POST',body:JSON.stringify({version:curTermsVersion})});
+    }catch(e){
+      if(btn){ btn.disabled=false; btn.textContent=label }
+      toast(e.message||'确认失败');
+      // 多半是「站主刚把协议改成新版了」（版本对不上被 409 挡回）：重拉一份让人看新的
+      try{ const t=await loadTerms(true); curTermsVersion=t.version; renderTermsWall(t) }catch(_){}
+      return;
+    }
+    if(btn){ btn.disabled=false; btn.textContent=label }
+    me.terms_version=curTermsVersion;
+    me.terms_at=null;
+  }else{
+    lsSet(TERMS_LS,String(curTermsVersion));   // 游客：本地记下签过的版本
+  }
+  finishTermsWall();
+  toast('已同意，欢迎 (｡･ω･｡)ﾉ');
+};
+
+window.declineTerms=()=>{
+  // 确认一道，免得误触；环境里没有 confirm 就直接走
+  try{ if(typeof confirm==='function' && !confirm('不同意就无法使用本站。确定要离开吗？')) return }catch(e){}
+  try{ location.replace('about:blank') }catch(e){}
+};
+
+/* ---- 协议：查看 / 站主编辑 ---- */
+window.openTermsView=async()=>{
+  const dlg=$('#termsViewDialog'); if(!dlg) return;
+  try{ dlg.showModal&&dlg.showModal() }catch(e){}
+  const ver=$('#termsViewVer');
+  try{
+    const t=await loadTerms();
+    fillTermsBody('#termsViewBody',t.text);
+    if(ver) ver.textContent='版本 v'+t.version+(t.updated_at?(' · 最后更新 '+time(t.updated_at)):'');
+  }catch(e){
+    const el=$('#termsViewBody'); if(el) el.textContent='加载失败：'+(e.message||e);
+  }
+};
+
+function renderTermsAdmin(d){
+  const ver=$('#termsAdminVer');
+  if(ver) ver.textContent='当前版本 v'+d.version
+    +(d.updated_at?(' · 最后修改 '+time(d.updated_at)):'')
+    +(d.customized?'':' · 还在用默认文案');
+  const st=$('#termsStats');
+  if(st) st.textContent='共 '+d.stats.total+' 个账号，其中 '+d.stats.agreed
+    +' 个已同意 v'+d.version+'，还有 '+d.stats.pending+' 个没确认。';
+  const list=$('#termsPending');
+  if(list){
+    list.innerHTML=(d.pending&&d.pending.length)
+      ? '<p class="adminNote">还没确认的账号（最多列 50 个）：</p>'
+        +d.pending.map(u=>`<div class="row"><span class="rowText">${esc(u.username)}<span class="muted"> · 已签到 v${Number(u.terms_version)||0}</span></span></div>`).join('')
+      : '<p class="muted">所有人都签过了 ♪</p>';
+  }
+}
+async function loadTermsAdmin(){
+  const msg=$('#termsAdminMsg'); if(msg) msg.textContent='';
+  try{
+    const d=await api('/admin/terms');
+    termsAdminCache=d;
+    const ta=$('#termsText'); if(ta) ta.value=d.text;
+    const bump=$('#termsBump'); if(bump) bump.checked=true;
+    renderTermsAdmin(d);
+    fillTermsBody('#termsPreview',d.text);
+  }catch(e){
+    const ver=$('#termsAdminVer'); if(ver) ver.textContent='读取失败：'+(e.message||e);
+  }
+}
+window.openTermsAdmin=async()=>{
+  const dlg=$('#termsAdminDialog'); if(!dlg) return;
+  const ta=$('#termsText');
+  // 输入时实时更新预览，但要防抖 —— 每敲一个字就重画一次会把光标顶跑
+  if(ta&&ta.addEventListener&&!ta.__bound){
+    ta.__bound=true;
+    let tm=0;
+    ta.addEventListener('input',()=>{ clearTimeout(tm); tm=setTimeout(()=>fillTermsBody('#termsPreview',ta.value),260) });
+  }
+  try{ dlg.showModal&&dlg.showModal() }catch(e){}
+  await loadTermsAdmin();
+};
+window.restoreTermsDefault=()=>{
+  const ta=$('#termsText'); if(!ta||!termsAdminCache) return;
+  ta.value=termsAdminCache.default_text;
+  fillTermsBody('#termsPreview',termsAdminCache.default_text);
+  const msg=$('#termsAdminMsg'); if(msg) msg.textContent='已填入默认文案，点「保存协议」才会生效。';
+};
+window.saveTerms=async()=>{
+  const ta=$('#termsText'), msg=$('#termsAdminMsg'), btn=$('#termsSaveBtn');
+  if(!ta) return;
+  const value=String(ta.value||'').trim();
+  if(!value){ if(msg) msg.textContent='协议正文不能为空。'; return }
+  const bump=(($('#termsBump')||{}).checked)?1:0;
+  if(btn) btn.disabled=true;
+  if(msg) msg.textContent='保存中…';
+  try{
+    const r=await api('/admin/terms',{method:'POST',body:JSON.stringify({text:value,bump})});
+    if(msg) msg.textContent=r.bumped
+      ? ('已保存：协议更新到 v'+r.version+'，所有用户下次进入都需要重新确认。')
+      : (r.changed?'已保存（只改文字，没有要求重新确认）。':'正文没有变化，版本仍是 v'+r.version+'。');
+    if(r.bumped) toast('协议已更新到 v'+r.version+'，所有人下次进入都要重新确认');
+    else if(r.changed) toast('协议文字已更新');
+    else toast('内容没有变化');
+    termsCache=null;                     // 正文变了，缓存作废
+    await loadTermsAdmin();
+  }catch(e){
+    if(msg) msg.textContent='保存失败：'+(e.message||e);
+  }finally{
+    if(btn) btn.disabled=false;
+  }
+};
+
+// 账户设置里的那一行状态
+async function fillTermsCard(){
+  const el=$('#termsState'); if(!el) return;
+  if(!me){ el.textContent='登录后可以看到你的确认记录。'; return }
+  const mine=Number(me.terms_version)||0;
+  const when=me.terms_at?('（'+time(me.terms_at)+'）'):'';
+  el.textContent='你的账号已同意到 v'+mine+when+'。';
+  try{
+    const t=await loadTerms();
+    el.textContent='当前协议为 v'+t.version+'，你的账号已同意到 v'+mine+when+'。';
+  }catch(e){ }
+}
+
 /* ---- 不易展示内容（隐藏限制帖）----
    作者在发布时勾「不易展示」，管理员 / 子管理员也能事后替别人补标。
    标记本身只是个 flag，盖不盖遮罩由**看的人**决定：账户设置里那颗开关
@@ -195,21 +397,42 @@ window.initSensitive=()=>{
   });
 };
 
+/* 头像是「匿名」最容易被漏掉的一处：匿名帖的用户名统一是「匿名用户」，
+   按首字方案会渲染成一个「匿」字色块 —— 那既不是空白，也让所有匿名帖长得一模一样、
+   反而像同一个人在说话。所以匿名内容走 ANON_AVATAR 哨兵，渲染成一个**空白**圆。
+   （哨兵由后端下发，不做「username==='匿名用户'」这种判断：用户名是可以改的。） */
+const ANON_AVATAR = 'anon:';
+
 // 头像本身也要能点进主页（很多人第一反应是点头像，不是点名字）。
 // stopPropagation 是必须的：列表里整张卡片自带「打开主题」的点击。
-function avatarLink(u, cls, uid){
-  return `<span class="avaLink" onclick="event.stopPropagation();openUser(${uid})">${avatarHtml(u,cls)}</span>`;
-}
-
-// 头像：emoji:🐱 显示表情，att:<id> 显示上传的图，都没有就用用户名首字。
-// 首字方案保证「还没设头像的人」也能一眼区分开 —— 这正是加头像的初衷。
+// author_id 为 0 表示这条内容没有主人（匿名），此时代码里不给 onclick ——
+// 否则会生成一个 openUser(0)、点了必然失败的链接。
 function avatarHtml(u, cls){
   const c = cls || 'ava';
   const av = String(u && u.avatar ? u.avatar : '');
+  if (av === ANON_AVATAR) return `<span class="${c} avaAnon" aria-hidden="true"></span>`;
   if (av.indexOf('emoji:') === 0) return `<span class="${c} avaEmoji">${esc(av.slice(6))}</span>`;
   if (av.indexOf('att:') === 0) return `<img class="${c}" src="/api/files/${av.slice(4)}" alt="" loading="lazy">`;
   const ch = String(u && u.username ? u.username : '?').trim().slice(0, 1).toUpperCase() || '?';
   return `<span class="${c} avaText">${esc(ch)}</span>`;
+}
+function avatarLink(u, cls, uid){
+  const id = Number(uid) || 0;
+  const inner = avatarHtml(u, cls);
+  // 没有作者 = 匿名：不做成链接（点了也没有主页可去），但仍然保留外框与尺寸
+  if (!id) return `<span class="avaLink avaAnonLink">${inner}</span>`;
+  return `<span class="avaLink" onclick="event.stopPropagation();openUser(${id})">${inner}</span>`;
+}
+// 作者名：同样是「有作者才做成链接」。列表卡片整张可点，所以要 stopPropagation。
+// tag 默认 span；帖子头里原来是 <b>，保持粗体就得让调用方指定。
+function nameLink(row, cls, tag){
+  const id = Number(row && row.author_id) || 0;
+  const nm = esc((row && row.username) || '匿名用户');
+  const T = tag || 'span';
+  const c = cls ? ' ' + cls : '';
+  return id
+    ? `<${T} class="linkName${c}" onclick="event.stopPropagation();openUser(${id})">${nm}</${T}>`
+    : `<${T} class="linkName anonName${c}">${nm}</${T}>`;
 }
 
 /* ---- 转帖 / 引用 / 点赞 ----
@@ -228,7 +451,8 @@ function rememberQuote(type, o){
     t: type, id: Number(o.id), user: o.username || '', title: o.title || '',
     excerpt: MD.plain(o.body || '').slice(0, 90),
     at: o.created_at || o.updated_at || '',
-    sensitive: o.sensitive ? 1 : 0
+    sensitive: o.sensitive ? 1 : 0,
+    anon: o.anon ? 1 : 0
   });
 }
 function quoteCache(type, id){ return QUOTES.get(type + ':' + id) || null }
@@ -237,7 +461,11 @@ function quoteCache(type, id){ return QUOTES.get(type + ':' + id) || null }
 // 原内容带「不易展示」标记时，标题连摘要一起收掉 —— 引用不该成为绕开限制的后门。
 function quoteCard(q){
   if (!q) return '';
+  // anon 来自服务端快照（引用匿名内容时），本地转帖预览走 rememberQuote 存的同一字段。
+  // 头像必须一起换掉：光把名字写成「匿名用户」，旁边却挂着一个「匿」字色块，
+  // 等于把「这条是匿名的」和「匿名都长一个样」同时说了一半。
   const who = esc(q.user || '已注销用户');
+  const ava = avatarHtml({ username: q.user, avatar: q.anon ? ANON_AVATAR : '' }, 'avaMini');
   const at = q.at ? esc(time(q.at)) : '';
   const jump = q.t === 'thread' ? `openThread(${q.id})` : (q.tid ? `openThread(${q.tid})` : '');
   const inner = (q.sensitive && sensitiveOn())
@@ -245,7 +473,7 @@ function quoteCard(q){
     : ((q.title ? `<b class="qTitle">${esc(q.title)}</b>` : '') +
        (q.excerpt ? `<span class="qText">${esc(q.excerpt)}</span>` : '<span class="qText muted">（没有文字内容）</span>'));
   return `<div class="quoteCard"${jump ? ` onclick="${jump}"` : ''}>
-    <div class="qHead">${avatarHtml({ username: q.user }, 'avaMini')}<b>${who}</b>${at ? `<small>${at}</small>` : ''}${q.sensitive ? '<span class="tag warn">不易展示</span>' : ''}</div>
+    <div class="qHead">${ava}<b${q.anon ? ' class="anonName"' : ''}>${who}</b>${at ? `<small>${at}</small>` : ''}${q.sensitive ? '<span class="tag warn">不易展示</span>' : ''}</div>
     ${inner}
   </div>`;
 }
@@ -315,6 +543,7 @@ window.openRepost=(target,id)=>{
   $('#repostTitle').value='';
   $('#repostBody').value='';
   if($('#repostSensitive')) $('#repostSensitive').checked=!!q.sensitive;
+  if($('#repostAnon')) $('#repostAnon').checked=false;   // 同发帖框：每次重新决定
   $('#repostHint').textContent=q.sensitive
     ? '这条内容本身就带着「不易展示」标记，所以这里默认跟着勾上了。'
     : '留空就是直接转：只挂一张引用卡，不另外写评论。';
@@ -333,13 +562,14 @@ $('#repostForm').onsubmit=async e=>{
   const auto='转帖：'+((q&&q.title)||(q&&String(q.excerpt||'').slice(0,40))||'一条内容');
   const title=(String($('#repostTitle').value||'').trim()||auto).slice(0,100);
   try{
+    const anon=$('#repostAnon')?.checked?1:0;
     const d=await api('/threads',{method:'POST',body:JSON.stringify({
       title, body, boardId:$('#repostBoard').value||'',
-      sensitive:$('#repostSensitive')?.checked?1:0,
+      sensitive:$('#repostSensitive')?.checked?1:0, anon,
       quote:{type:repostTarget.type,id:repostTarget.id}
     })});
     $('#repostDialog').close(); repostTarget=null;
-    toast('已转帖 ✨'); curPage=1;
+    toast(anon?'已匿名转帖 ✨':'已转帖 ✨'); curPage=1;
     if(d&&d.id) openThread(d.id); else list();
   }catch(x){ toast(x.message) }
 };
@@ -758,8 +988,39 @@ function time(s){
   return d.toLocaleString('zh-CN',{year:'numeric',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
 }
 const isMine=(uid)=>!!me && (me.id===uid || me.can_mod);
+/* isMine 把子管理员也算成「我的」，因为治理按钮（设为限制、删除）本来就该给他们。
+   但「编辑」和「挂投票」不一样：MOD_ACTIONS 里没有 edit，后端的 pollTarget 也只认作者与站主 ——
+   用 isMine 渲染这两颗按钮，子管理员看到的是一颗点了必然吃 403 的按钮。
+   所以作者那一档单独判：真作者，或站主（站主替别人管是设计里就有的）。 */
+const isAuthor=(uid)=>!!me && me.id===Number(uid);
+const canOwn=(uid)=>isAuthor(uid) || canAdmin();
 
-async function init(){initTheme();const st=await api('/status');me=st.user;setupNeeded=st.setupNeeded;uploadOn=!!st.uploadEnabled;maxUploadMb=Number(st.maxUploadMb)||0;maxAvatarMb=Number(st.maxAvatarMb)||0;updateNav();if(setupNeeded)$('#setupDialog').showModal();renderMdBars();await list();}
+async function init(){
+  initTheme();
+  const st=await api('/status');
+  me=st.user;setupNeeded=st.setupNeeded;uploadOn=!!st.uploadEnabled;maxUploadMb=Number(st.maxUploadMb)||0;maxAvatarMb=Number(st.maxAvatarMb)||0;
+  updateNav();renderMdBars();
+  // 首次初始化（还没有管理员）：先让站主把账号建起来。协议这会儿还没定稿，
+  // 拦住他只会让人无从下手（管理员本来也豁免协议）。
+  if(setupNeeded){try{$('#setupDialog').showModal()}catch(e){};await list();return}
+  // 协议墙：没签当前版本就一个字的内容都不加载 ——
+  // 「看完协议才能使用」就是这么落地的，而不是先给内容再补个弹窗。
+  if(termsNeed(st)) await termsWall();
+  await list();
+}
+
+/* 登录 / 注册 / 2FA 通过之后重新判一次协议门槛。
+   必须重新问一次服务端：未登录时 me 为空、判断走的是 localStorage 里的游客版本，
+   换成登录身份之后「该不该签」完全由服务端说了算。
+   签完（termsWall 的 Promise resolve）才返回，调用方那时再加载内容即可。 */
+async function termsGateAfterAuth(u){
+  try{
+    const st=await api('/status');
+    if(st.user) me=st.user;
+    if(st.setupNeeded) return;
+    if(termsNeed(st)) await termsWall();
+  }catch(e){ }
+}
 
 function updateNav(){
   $('#loginBtn').classList.toggle('hidden',!!me);
@@ -1011,7 +1272,7 @@ async function list(keepBar){
   $('#threadCount').textContent=pageInfo.total;   // 顶栏那个「主题」显示的是筛选后的总数，不是本页条数
   const emptyMsg=curQ?`没有找到和「${esc(curQ)}」有关的主题。换个词试试 ✨`
     :(curBoard==='all'?'还没有主题。成为第一个留下文字的人吧 ✨':'这个板块还没有帖子，来开个头吧 ✨');
-  app.innerHTML=`<div class="threadList">${rows.map((t,i)=>{const locked=sensitiveOn()&&!!(t.sensitive);const acts=reactRow('thread',t.id,t.likes||0,!!t.liked,t.reposts||0,false);return `<article class="thread anim-in" style="animation-delay:${Math.min(i*45,450)}ms" onclick="openThread(${t.id})"><div class="threadTop">${t.pinned?'<span class="tag">置顶</span>':''}${t.locked?'<span class="tag">已锁</span>':''}${t.sensitive?'<span class="tag warn">不易展示</span>':''}${t.protected?'<span class="tag board shieldTag">已保护</span>':''}${t.quote_ref?'<span class="tag mute">转帖</span>':''}${t.board_name?`<span class="tag board">${esc(t.board_name)}</span>`:''}</div><h3>${esc(t.title)}</h3><p class="${locked?'blurLock':''}">${renderBody(t.body, t.att, true)}</p>${previewThumbs(t.body,t.att,locked)}<div class="meta">${avatarLink(t,'avaMini',t.author_id)}<span class="linkName" onclick="event.stopPropagation();openUser(${t.author_id})">${esc(t.username)}</span><span>${time(t.updated_at)}</span><span>${t.replies} 回复</span>${locked?'<span class="lockTip">滑动确认后可读</span>':''}</div>${pollMiniHtml(t.poll)}${acts}</article>`}).join('')}</div>${!rows.length?`<div class="empty anim-in">${emptyMsg}</div>`:''}${pagerHtml()}`;
+  app.innerHTML=`<div class="threadList">${rows.map((t,i)=>{const locked=sensitiveOn()&&!!(t.sensitive);const acts=reactRow('thread',t.id,t.likes||0,!!t.liked,t.reposts||0,false);return `<article class="thread anim-in" style="animation-delay:${Math.min(i*45,450)}ms" onclick="openThread(${t.id})"><div class="threadTop">${t.pinned?'<span class="tag">置顶</span>':''}${t.locked?'<span class="tag">已锁</span>':''}${t.sensitive?'<span class="tag warn">不易展示</span>':''}${t.protected?'<span class="tag board shieldTag">已保护</span>':''}${t.quote_ref?'<span class="tag mute">转帖</span>':''}${t.board_name?`<span class="tag board">${esc(t.board_name)}</span>`:''}</div><h3>${esc(t.title)}</h3><p class="${locked?'blurLock':''}">${renderBody(t.body, t.att, true)}</p>${previewThumbs(t.body,t.att,locked)}<div class="meta">${avatarLink(t,'avaMini',t.author_id)}${nameLink(t)}<span>${time(t.updated_at)}</span><span>${t.replies} 回复</span>${locked?'<span class="lockTip">滑动确认后可读</span>':''}</div>${pollMiniHtml(t.poll, locked, t.locked && !canAdmin())}${acts}</article>`}).join('')}</div>${!rows.length?`<div class="empty anim-in">${emptyMsg}</div>`:''}${pagerHtml()}`;
 }
 
 /* ---- 楼中楼 ----
@@ -1049,7 +1310,7 @@ function quoteBar(parent){
   return `<div class="quoteBar"><i>回复 ${esc(parent.p.username)}：</i>${esc(txt)}${MD.plain(parent.p.body).length > 60 ? '…' : ''}</div>`;
 }
 
-function replyNodeHtml(node, depth, att, threadId, lock){
+function replyNodeHtml(node, depth, att, threadId, lock, pollEnded){
   const p = node.p;
   const acts = [];
   // 游客既没有回复框也没有编辑权，按钮就不该出现
@@ -1057,16 +1318,17 @@ function replyNodeHtml(node, depth, att, threadId, lock){
   // 受保护的回复：所有权已经交给站主，作者本人也不能改不能删 ——
   // 按钮干脆不渲染，免得点了才吃一个 403。
   const canTouch = !(p.protected && !canAdmin());
-  if (isMine(p.author_id) && canTouch) {
-    acts.push(`<button class="mini" onclick="editPost(${p.id},${threadId})">编辑</button>`);
-    acts.push(`<button class="mini danger" onclick="delPost(${p.id},${threadId})">删除</button>`);
-  }
+  // 匿名内容连编辑入口都不给：它没有主人，后端也不会放行（发出去就改不了）
+  if (!p.anon && canOwn(p.author_id) && canTouch) acts.push(`<button class="mini" onclick="editPost(${p.id},${threadId})">编辑</button>`);
+  if (isMine(p.author_id) && canTouch) acts.push(`<button class="mini danger" onclick="delPost(${p.id},${threadId})">删除</button>`);
   // 管理员 / 子管理员可以给别人的内容补上（或撤掉）「不易展示」标记（受保护的除外）
   if (canMod() && canTouch) acts.push(`<button class="mini" onclick="toggleSensitive('post',${p.id},${threadId})">${p.sensitive?'取消限制':'设为限制'}</button>`);
   // 站主：把这条回复「接管」过来（或交还作者）
   if (canAdmin()) acts.push(`<button class="mini" onclick="toggleProtect('post',${p.id},${threadId})">${p.protected?'取消保护':'保护此回复'}</button>`);
-  // 投票：一条回复最多挂一个；已经有人投过票就只能找站主移除
-  if (isMine(p.author_id) && canTouch && !lock) {
+  // 投票：一条回复最多挂一个；已经有人投过票就只能找站主移除。
+  // 匿名内容只有站主能管（后端 pollTarget 认的是 author_id，而匿名行没有真作者）。
+  const pollOwn = p.anon ? canAdmin() : canOwn(p.author_id);
+  if (pollOwn && canTouch && !lock) {
     if (p.poll) { if (!p.poll.total || canAdmin()) acts.push(`<button class="mini danger" onclick="removePoll('post',${p.id},${threadId})">移除投票</button>`); }
     else acts.push(`<button class="mini" onclick="openPollDialog('post',${p.id},${threadId})">＋ 投票</button>`);
   }
@@ -1078,17 +1340,17 @@ function replyNodeHtml(node, depth, att, threadId, lock){
     <div class="postHead">
       ${avatarLink(p, 'ava', p.author_id)}
       <div class="postWho">
-        <b class="linkName" onclick="openUser(${p.author_id})">${esc(p.username)}</b>
+        ${nameLink(p, '', 'b')}
         <small>#${node.no} · ${time(p.created_at)}${p.role === 'admin' ? ' · 管理员' : ''}${p.protected ? ' · <span class="tag board shieldTag">已保护</span>' : ''}${p.edited_at ? ` · <span class="edited" onclick="showEdits('post',${p.id})">已编辑</span>` : ''}</small>
         ${p.bio ? `<span class="sig">${esc(p.bio)}</span>` : ''}
       </div>
     </div>
     ${quoteBar(parentOf(node))}
     ${quoteCardOf(p.quote_snapshot)}
-    <div class="postBody">${bodyWithPollHtml(p, att, '这条回复被标记为不易展示')}</div>
+    <div class="postBody">${bodyWithPollHtml(p, att, '这条回复被标记为不易展示', pollEnded)}</div>
     ${react}
     ${acts.length ? `<div class="postActions">${acts.join('')}</div>` : ''}
-    ${node.kids.map(k => replyNodeHtml(k, depth + 1, att, threadId, lock)).join('')}
+    ${node.kids.map(k => replyNodeHtml(k, depth + 1, att, threadId, lock, pollEnded)).join('')}
   </article>`;
 }
 // 渲染时临时记一下父节点，供 quoteBar 取用（避免把 parent 一路当参数传下去）
@@ -1109,6 +1371,12 @@ window.openThread=async id=>{
   try{ d=await api('/threads/'+id) }
   catch(x){ toast(x.message); list(); return }
   const t=d.thread, lock=!!(t.locked&&!canMod());
+  // 投票的「结束」比回复框的「锁定」再严一档：锁定主题里连管理员之外的人都不能回复
+  // （后端回复接口就是这么判的），投票跟着同一条线走，前后端才不会各说各话。
+  const pollEnded=!!(t.locked&&!canAdmin());
+  // 换一帖就把「多选勾了哪几项」清空。不清的话，上次勾了没提交的选项会留在 pollPicks 里，
+  // 屏幕上明明没打勾，点「投票」却会把这个看不见的旧选择提交上去。
+  pollPicks.clear();
   rememberQuote('thread',t);
   (d.posts||[]).forEach(p=>rememberQuote('post',p));   // 回复也能被引用 / 转帖
   // 管理员 / 子管理员可以把帖子挪到别的板块。只改归属，内容一条不少，随时可以再挪回来。
@@ -1129,12 +1397,13 @@ window.openThread=async id=>{
   const headActs=[];
   // 受保护 = 所有权在站主手上，作者那一排按钮直接不渲染（点了也只会吃 403）
   const canTouchT = !(t.protected && !canAdmin());
-  if (isMine(t.author_id) && canTouchT) headActs.push(`<button class="mini" onclick="editThread(${t.id})">编辑</button>`);
+  if (!t.anon && canOwn(t.author_id) && canTouchT) headActs.push(`<button class="mini" onclick="editThread(${t.id})">编辑</button>`);
   if (isMine(t.author_id) && canTouchT) headActs.push(`<button class="mini danger" onclick="delThread(${t.id})">删除主题</button>`);
   if (canMod() && canTouchT) headActs.push(`<button class="mini" onclick="toggleSensitive('thread',${t.id},${t.id})">${t.sensitive?'取消限制':'设为限制'}</button>`);
   if (canAdmin()) headActs.push(`<button class="mini" onclick="toggleProtect('thread',${t.id},${t.id})">${t.protected?'取消保护':'保护此主题'}</button>`);
   // 投票：一条内容最多挂一个。已经有人投过票之后后端不让移除，前端也就别给这颗按钮。
-  if (isMine(t.author_id) && canTouchT && !lock) {
+  const pollOwnT = t.anon ? canAdmin() : canOwn(t.author_id);
+  if (pollOwnT && canTouchT && !lock) {
     if (t.poll) { if (!t.poll.total || canAdmin()) headActs.push(`<button class="mini danger" onclick="removePoll('thread',${t.id},${t.id})">移除投票</button>`); }
     else headActs.push(`<button class="mini" onclick="openPollDialog('thread',${t.id},${t.id})">＋ 投票</button>`);
   }
@@ -1145,7 +1414,7 @@ window.openThread=async id=>{
       <div class="postHead">
         ${avatarLink(t, 'ava', t.author_id)}
         <div class="postWho">
-          <b class="linkName" onclick="openUser(${t.author_id})">${esc(t.username)}</b>
+          ${nameLink(t, '', 'b')}
           <small>${time(t.created_at)}${t.board_name?` · <span class="tag board">${esc(t.board_name)}</span>`:''}${t.protected?' · <span class="tag board shieldTag">已保护</span>':''}${t.locked?' · 已锁定':''}${t.edited_at?` · <span class="edited" onclick="showEdits('thread',${t.id})">已编辑</span>`:''}</small>
           ${t.bio?`<span class="sig">${esc(t.bio)}</span>`:''}
         </div>
@@ -1153,12 +1422,12 @@ window.openThread=async id=>{
       <h1>${esc(t.title)}</h1>
       ${t.protected?'<p class="shieldNote">这条内容已由站主保护：原作者不再能修改或删除它。</p>':''}
       ${quoteCardOf(t.quote_snapshot)}
-      <div class="postBody">${bodyWithPollHtml(t, d.att, '这条内容被标记为不易展示')}</div>
+      <div class="postBody">${bodyWithPollHtml(t, d.att, '这条内容被标记为不易展示', pollEnded)}</div>
       ${moveRow}
       ${me?reactRow('thread',t.id,t.likes||0,!!t.liked,t.reposts||0,!lock):''}
       ${headActs.length?`<div class="postActions">${headActs.join('')}</div>`:''}
     </article>
-    <div class="replies">${roots.map(n=>replyNodeHtml(n,0,d.att,id,lock)).join('')}</div>
+    <div class="replies">${roots.map(n=>replyNodeHtml(n,0,d.att,id,lock,pollEnded)).join('')}</div>
     ${me?`<form class="replyBox${narrowScreen()?' collapsed':''}" id="replyForm">
       <button type="button" class="replyOpen" onclick="expandReply()">写下回复……</button>
       <div class="replyTo hidden" id="replyToBar"></div>
@@ -1167,6 +1436,7 @@ window.openThread=async id=>{
       ${lock?'':`<div class="mdBar" data-ta="#replyBody"${uploadOn?' data-file="#replyFile"':''}></div>`}
       ${lock||!uploadOn?'':`<input type="file" id="replyFile" class="fileHidden" accept="image/*,video/*,audio/*" multiple onchange="uploadInto('#replyFile','#replyBody')"><div class="progress hidden"><i></i></div><div class="upRow hidden"><span class="upTip muted"></span><button class="mini" type="button" onclick="cancelUpload()">取消</button></div>`}
       ${lock?'':`<label class="checkRow slim"><input type="checkbox" id="replySensitive"> 标记为不易展示（剧透 / 公共场合不宜）</label>`}
+      ${lock?'':`<label class="checkRow slim"><input type="checkbox" id="replyAnon"> 匿名回复（不记录发布者，发出后无法自行修改或删除）</label>`}
       ${lock?'':`<div class="pollCompose"><div class="hrRow"><button class="mini" type="button" id="replyPollBtn" onclick="openPollDialog()">＋ 插入投票</button><span class="muted">每个账号只能投一次</span></div><div id="replyPollChip"></div></div>`}
       <div class="rowActions end"><span class="muted" id="draftTip"></span><button class="primary" ${lock?'disabled':''}>回复</button></div>
     </form>`:'<div class="empty">登录后才能回复。</div>'}
@@ -1186,8 +1456,13 @@ window.openThread=async id=>{
     try{
       // 引用和「回复某楼」是两件独立的事，但一次只能挂一个 ——
       // 引用的是内容，回复的是楼层，同时给两条关系只会让读的人分不清。
-      await api('/threads/'+id+'/posts',{method:'POST',body:JSON.stringify({body:$('#replyBody').value,replyTo:curReplyTo,sensitive:$('#replySensitive')?.checked?1:0,quote:curQuote||null,poll:curPollDraft||null})});
-      draftClear('post:'+id); curReplyTo=0; curQuote=null; curPollDraft=null; toast('回复已发布'); openThread(id);
+      const anon=$('#replyAnon')?.checked?1:0;
+      const wantPoll=curPollDraft||null;
+      const d=await api('/threads/'+id+'/posts',{method:'POST',body:JSON.stringify({body:$('#replyBody').value,replyTo:curReplyTo,sensitive:$('#replySensitive')?.checked?1:0,anon,quote:curQuote||null,poll:wantPoll})});
+      draftClear('post:'+id); curReplyTo=0; curQuote=null; curPollDraft=null;
+      // 投票不合规时后端静默丢弃（正文照发）—— 不说一句，人会以为投票挂上去了
+      toast(wantPoll&&!(d&&d.poll)?'已回复，但投票没挂上：需要一句问题和至少 2 个不同的选项':(anon?'匿名回复已发布':'回复已发布'));
+      openThread(id);
     }catch(x){toast(x.message)}
   });
   renderReplyToBar();
@@ -1266,12 +1541,14 @@ let curThreadId = 0;          // 当前打开的主题（投票完要原地重�
 let pollLastThread = -1;      // 草稿属于哪一帖
 function pollPicksOf(pid){ if(!pollPicks.has(pid)) pollPicks.set(pid,new Set()); return pollPicks.get(pid) }
 
-// 投票卡。id 是必须的：投完票只重画这一张卡，整屏重画会把人正看着的位置冲掉。
-function pollCardHtml(p){
+/* 投票卡。id 是必须的：投完票只重画这一张卡，整屏重画会把人正看着的位置冲掉。
+   ended = 所在主题已锁定（且你不是站主）：讨论到此为止，票也不再收了 ——
+   但结果照给，已经投过的人不该因为帖子被锁就看不到自己投过什么。 */
+function pollCardHtml(p, ended){
   if(!p||!p.id) return '';
   const total=Number(p.total||0);
   const voted=!!p.voted;
-  const showRes=voted||!me;                       // 投过 / 游客 → 直接看结果
+  const showRes=voted||!me||!!ended;              // 投过 / 游客 / 已结束 → 直接看结果
   const mine=Array.isArray(p.mine)?p.mine:[];
   const opts=(p.options||[]).map(o=>{
     const n=Number(o.n||0);
@@ -1291,7 +1568,7 @@ function pollCardHtml(p){
   }).join('');
   const submit=(!showRes&&p.multi)?`<button class="mini primary pollSubmit" type="button" onclick="submitPoll(${p.id})">投票</button>`:'';
   const foot=showRes
-    ? `共 ${total} 人参与${voted?' · 已投票，谢谢你的这一票':(!me?' · 登录后才能投票':'')}`
+    ? `共 ${total} 人参与${voted?' · 已投票，谢谢你的这一票':(ended?' · 主题已锁定，投票已结束':(!me?' · 登录后才能投票':''))}`
     : (p.multi?'可以选多个 · 每个人只有一票':'选一个 · 每个人只有一票');
   return `<div class="pollCard" id="pollCard-${p.id}">
     <div class="pollHead">${ICO_POLL}<b>${esc(p.question)}</b><span class="tag mute">${p.multi?'多选':'单选'}</span></div>
@@ -1303,19 +1580,24 @@ function pollCardHtml(p){
 
 /* 正文 + 投票卡一起渲染：标记了「不易展示」时两者一起被遮住 ——
    只遮正文、把投票露在外面，等于那条限制标记形同虚设。 */
-function bodyWithPollHtml(o, att, note){
-  const inner = renderBody(o.body, att) + pollCardHtml(o.poll);
+function bodyWithPollHtml(o, att, note, ended){
+  const inner = renderBody(o.body, att) + pollCardHtml(o.poll, ended);
   return (sensitiveOn() && o.sensitive) ? coverHtml(inner, note || '这条内容被标记为不易展示') : inner;
 }
 
-// 列表里的投票只给一句摘要：整张卡片本来就是「点进去看」，
-// 在列表里铺开一排选项既占地方，也让人误以为可以直接在列表里投。
-function pollMiniHtml(p){
+/* 列表里的投票只给一句摘要：整张卡片本来就是「点进去看」，
+   在列表里铺开一排选项既占地方，也让人误以为可以直接在列表里投。
+   locked 时整块一起糊掉 —— 投票的「问题」是作者写的用户内容，
+   正文被遮住、问题却明文挂在下面，那条「不易展示」标记就漏了一半
+   （剧透往往就写在问题里，比如「凶手是不是他？」）。 */
+function pollMiniHtml(p, locked, ended){
   if(!p||!p.id) return '';
   const total=Number(p.total||0);
-  return `<div class="pollMini">${ICO_POLL}<b>${esc(p.question)}</b>`+
+  // 未登录的人点不出投票框，就别写着「去投票」骗他点
+  const go=!me?(ended?'投票已结束':'登录后投票'):(p.voted?'看结果':(ended?'查看结果':'去投票'));
+  return `<div class="pollMini${locked?' blurLock':''}">${ICO_POLL}<b>${esc(p.question)}</b>`+
     `<span class="muted">${total?`${total} 人参与`:'还没有人投票'} · ${p.multi?'多选':'单选'}</span>`+
-    `<span class="pollMiniGo">${p.voted?'看结果':'去投票'} →</span></div>`;
+    `<span class="pollMiniGo">${go} →</span></div>`;
 }
 
 /* ---- 投票编辑器 ----
@@ -1482,6 +1764,9 @@ function userPostList(d, q){
 }
 
 window.openUser=async (uid,q)=>{
+  // 0 = 匿名内容（后端把匿名行的 author_id 下发成 0，为的就是不让前端生成这类链接）。
+  // 老页面 / 老缓存里可能还留着 openUser(0)，这里直接当无事发生，别丢一个必然失败的请求出去。
+  if(!Number(uid)) return;
   setView('user');
   try{
     curUserQ=String(q||'');
@@ -1582,6 +1867,9 @@ $('#authForm').onsubmit=async e=>{
   e.preventDefault();
   try{
     const p={username:$('#authUser').value,password:$('#authPass').value};
+    // 注册时把「注册页上已经同意过的版本」一起报上去：正好是当前版本就直接记进账号，
+    // 免得刚签完立刻又被协议墙接住（版本对不上后端会留 0，登录后照常弹）。
+    if(mode==='register') p.terms_version=Number(lsGet(TERMS_LS,'0'))||0;
     const d=await api(mode==='login'?'/login':'/register',{method:'POST',body:JSON.stringify(p)});
     if(mode==='register'){toast('注册成功，请登录');mode='login';$('#authTitle').textContent='登录';$('#switchAuth').innerHTML='没有账号？<a href="#">注册</a>';$('#authPass').value='';return}
     // 胁迫密码：**不是登录成功** —— 后端一个会话都没下发。
@@ -1596,7 +1884,10 @@ $('#authForm').onsubmit=async e=>{
     if(d.need2fa){
       pending2fa=d.pending;$('#authDialog').close();$('#tfaLoginCode').value='';$('#tfaLoginDialog').showModal();return;
     }
-    me=d.user;$('#authDialog').close();updateNav();toast('欢迎回来，'+me.username);list();
+    me=d.user;$('#authDialog').close();updateNav();
+    // 这个账号没签当前协议的话，先签 —— 签完才加载内容
+    await termsGateAfterAuth(me);
+    toast('欢迎回来，'+me.username);list();
   }catch(x){toast(x.message)}
 };
 
@@ -1604,7 +1895,9 @@ $('#tfaLoginForm').onsubmit=async e=>{
   e.preventDefault();
   try{
     const d=await api('/2fa/verify',{method:'POST',body:JSON.stringify({pending:pending2fa,code:$('#tfaLoginCode').value})});
-    me=d.user;pending2fa=null;$('#tfaLoginDialog').close();updateNav();toast('欢迎回来，'+me.username);list();
+    me=d.user;pending2fa=null;$('#tfaLoginDialog').close();updateNav();
+    await termsGateAfterAuth(me);
+    toast('欢迎回来，'+me.username);list();
   }catch(x){toast(x.message)}
 };
 
@@ -1637,6 +1930,9 @@ $('#newBtn').onclick=async()=>{
   // 发帖框是一次全新的写作：把上一帖回复框里可能留下的投票草稿清掉，
   // 免得它跟到新帖里（两个编辑器共用一份草稿，但一次只该有一个在用）。
   curPollDraft=null; renderPollChips();
+  // 匿名每一帖重新决定：上一次勾了不代表这一次也要匿名。
+  // （弹窗用 × 关掉不会触发表单 reset，留着勾就会「下一次静默地匿名发出去了」。）
+  if($('#postAnon')) $('#postAnon').checked=false;
   $('#postDialog').showModal();
 };
 // 输入即存草稿（发帖框内容少，直接存，不做防抖）
@@ -1644,7 +1940,7 @@ $('#newBtn').onclick=async()=>{
   $(sel)?.addEventListener('input',()=>{ draftSet('thread',JSON.stringify({t:$('#postTitle').value,b:$('#postBody').value})) });
 });
 
-$('#postForm').onsubmit=async e=>{e.preventDefault();try{await api('/threads',{method:'POST',body:JSON.stringify({title:$('#postTitle').value,body:$('#postBody').value,boardId:$('#postBoard').value||'',sensitive:$('#postSensitive')?.checked?1:0,poll:curPollDraft||null})});$('#postDialog').close();$('#postForm').reset();draftClear('thread');$('#postDraftTip').textContent='';curPollDraft=null;renderPollChips();toast('发布成功');curPage=1;list()}catch(x){toast(x.message)}};
+$('#postForm').onsubmit=async e=>{e.preventDefault();try{const anon=$('#postAnon')?.checked?1:0;const wantPoll=curPollDraft||null;const d=await api('/threads',{method:'POST',body:JSON.stringify({title:$('#postTitle').value,body:$('#postBody').value,boardId:$('#postBoard').value||'',sensitive:$('#postSensitive')?.checked?1:0,anon,poll:wantPoll})});$('#postDialog').close();$('#postForm').reset();draftClear('thread');$('#postDraftTip').textContent='';curPollDraft=null;renderPollChips();/* 投票不合规时后端是**静默丢弃**的（正文照发）—— 不吭声的话人会以为投票挂上去了 */toast(wantPoll&&!(d&&d.poll)?'已发布，但投票没挂上：需要一句问题和至少 2 个不同的选项':(anon?'已匿名发布 ✨':'发布成功'));curPage=1;list()}catch(x){toast(x.message)}};
 
 $('#boardForm').onsubmit=async e=>{
   e.preventDefault();
@@ -1672,6 +1968,7 @@ $('#settingsBtn').onclick=()=>{
   $('#delCodeWrap').classList.toggle('hidden',!on);
   $('#duressCodeWrap')?.classList.toggle('hidden',!on);
   fillDuressCard();
+  fillTermsCard();                  // 用户协议：显示当前版本与本人签到了哪一版
   // 管理员不允许注销自己（后端也会拦）。这里保留「注销账号」卡片本身，
   // 只把表单收起来、把说明文字换成明确提示，让管理员一眼知道为什么不能注销，
   // 而不是整块消失得莫名其妙。同时给卡片挂 is-locked —— 禁用态换成中性灰蓝，
@@ -1959,7 +2256,8 @@ $('#adminBtn').onclick=async()=>{
       <span class="back" onclick="list()">← 返回</span>
       <h2>管理中心</h2>
       <p class="muted">${canAdmin()?'你是管理员，拥有全部权限。':'你是子管理员，可进行置顶、锁定、删帖、删回复、移动板块等内容治理操作。'}</p>
-      ${canAdmin()?'<div class="adminTools"><button class="mini" onclick="openTrash()">回收站</button><button class="mini" onclick="openStore()">附件存储设置</button></div>':''}
+      ${canAdmin()?'<div class="adminTools"><button class="mini" onclick="openTrash()">回收站</button><button class="mini" onclick="openStore()">附件存储设置</button><button class="mini" onclick="openTermsAdmin()">用户协议</button></div>':''}
+      ${canAdmin()?'<p class="adminNote">改一次用户协议，版本号 +1，所有人下次进入都要重新确认。</p>':''}
       <div class="admin">${userCard}${threadCard}${boardCard}${postsCard}</div></div>`;
   }catch(x){toast(x.message)}
 };

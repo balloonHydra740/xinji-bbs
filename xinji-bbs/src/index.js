@@ -31,6 +31,16 @@ const MOD_ACTIONS = new Set([ 'deletePost', 'deleteThread', 'pin', 'lock', 'move
 const isMod = (u) => !!u && (u.role === ROLE_MOD || u.role === ROLE_ADMIN);
 const isAdmin = (u) => !!u && u.role === ROLE_ADMIN;
 
+/* ---------------- 匿名发布（0013）----------------
+   匿名内容不记在真人头上：author_id 指向下面这个**系统账号**。
+   它的 password_hash 是一串随机数的哈希，原文谁都不知道 —— 这个账号永远登不进去，
+   也就没有「用匿名账号登录后翻出所有匿名帖」这条路。
+   细节与取舍见 migrations/0013_anon.sql 顶部注释。 */
+const ANON_NAME = '匿名用户';
+// 匿名内容下发给前端的头像哨兵：前端见到它就渲染一个空白圆（没有首字、没有图）。
+// 用哨兵而不是「username==='匿名用户'」，是因为用户名可以被改名、也不该被拿来当类型判断。
+const ANON_AVATAR = 'anon:';
+
 async function passwordHash(password, saltB64, iterations = PASSWORD_ITERATIONS) {
   const salt = saltB64
     ? unb64(saltB64)
@@ -191,7 +201,9 @@ async function currentUser(req,env){
   // avatar / bio 也一并取出：设置页要回显、publicUser 要输出，取不到就会「保存成功却显示空白」
   // duress_hash / duress_state：设置页要显示「有没有设过胁迫密码」，
   // 而且处在保护状态的账号不该还能拿着旧会话继续用。
-  const row=await env.DB.prepare(`SELECT u.id,u.username,u.role,u.banned,u.totp_enabled,u.avatar,u.bio,u.sensitive_filter,u.duress_hash,u.duress_state FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?`).bind(th,Date.now()).first();
+  // terms_version（0012）：requireTerms 靠它判断要不要弹协议墙 —— 漏了这一列，
+  // 已同意的用户会被当成「一版都没签过」而无限弹窗。
+  const row=await env.DB.prepare(`SELECT u.id,u.username,u.role,u.banned,u.totp_enabled,u.avatar,u.bio,u.sensitive_filter,u.duress_hash,u.duress_state,u.terms_version,u.terms_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?`).bind(th,Date.now()).first();
   if(!row) return null; if(row.banned) return {...row,banned:1}; return row;
 }
 
@@ -216,6 +228,10 @@ async function requireUser(req,env){
   // 保护状态：触发时已经作废了全部会话，这里再拦一道 ——
   // 万一有并发请求带着旧 cookie 挤进来，也不该还能读能写。
   if(u.duress_state) throw json({error:'该账号处于保护状态，需要站主手动恢复'},403);
+  // 用户协议（0012）：没同意当前版本就什么都别想干。
+  // 放在最后一道 —— 被封禁 / 保护中的账号报的必须是它们自己的原因，
+  // 否则用户会看到一句「请先同意协议」而完全不知道账号其实已经出问题了。
+  await requireTerms(env,u);
   return u;
 }
 // 需要「管理员」权限（全权）
@@ -259,6 +275,10 @@ function publicUser(u){
     sensitive_filter: (u.sensitive_filter==null||u.sensitive_filter)?1:0,
     // 有没有设过胁迫密码（设置页要显示状态；哈希本身绝不下发）
     duress_set: u.duress_hash?1:0,
+    // 协议：签到哪一版、什么时候签的（设置页要显示）。
+    // 正文不下发 —— 要看得走 /api/terms，别让它跟着每一份用户数据到处飘。
+    terms_version: Number(u.terms_version||0),
+    terms_at: u.terms_at||null,
     can_mod: isMod(u)?1:0,          // 可做内容治理（删置顶、锁定、删帖、删回复）
     can_admin: isAdmin(u)?1:0,      // 拥有管理员全权
   };
@@ -268,6 +288,58 @@ function publicUser(u){
 // 统一成 0/1 再入库，绝不把 undefined 写进 INTEGER 列（SQLite 会存成 NULL，
 // 之后 `WHERE sensitive=0` 就永远筛不到这一行）。
 const toFlag = (v) => (v===true||v===1||v==='1'||v==='true'||v==='on')?1:0;
+
+/* 系统「匿名用户」账号的 id。匿名内容全挂在它名下，它一辈子不变，
+   所以按 D1 实例缓存一次（换数据库 —— 测试里的新 mock —— 自动失效）。 */
+const anonIdCache = new WeakMap();
+
+/* 建这个账号刻意是**懒**的：第一次真要发匿名内容时才建。
+   不放在 ensureSchema 里跟着结构自检一起建，有两个理由：
+     ① users 是 AUTOINCREMENT 表，早建一步就白占一个 id ——
+        全新安装的站主会莫名其妙变成 #2（老库也会多出一个「匿名用户」；
+        测试里还有一批断言直接写着 user_id=1）。
+     ② 一个从没用过匿名功能的站点，用户表里不该无端多出一个「匿名用户」。
+   并发下两个人同时发第一条匿名帖时，唯一索引会把第二次插入挡下来 ——
+   那就重新查一次，拿同一个 id。 */
+async function ensureAnonUser(env){
+  const key = env.DB;
+  if (key && typeof key==='object' && anonIdCache.has(key)) return anonIdCache.get(key);
+  let id = 0;
+  try{
+    const row = await env.DB.prepare(`SELECT id FROM users WHERE username=?`).bind(ANON_NAME).first();
+    id = Number(row?.id || 0);
+  }catch(e){ id = 0 }
+  if (!id) {
+    try{
+      // password_hash 用 32 字节随机数的哈希：原文不进日志、不下发、谁也猜不到 ——
+      // 这个账号在登录接口上等于不存在。
+      const r = await env.DB.prepare(`INSERT INTO users(username,password_hash,role) VALUES(?,?,'user')`)
+        .bind(ANON_NAME, await passwordHash(randomToken())).run();
+      id = Number(r?.meta?.last_row_id || 0);
+    }catch(e){
+      try{
+        const row = await env.DB.prepare(`SELECT id FROM users WHERE username=?`).bind(ANON_NAME).first();
+        id = Number(row?.id || 0);
+      }catch(e2){ id = 0 }
+    }
+  }
+  if (id && key && typeof key==='object') anonIdCache.set(key, id);
+  return id;
+}
+// 路由里读它；没有就顺手建一个
+const anonUserId = ensureAnonUser;
+
+/* 匿名内容对外的一层「抹平」：名字统一、头像换成空白哨兵、author_id 下发 0。
+   author_id 为什么要变 0：前端拿它渲染「点进 TA 的主页」，
+   系统账号的主页是打不开的（见 /api/users/:id），给 0 前端就不会生成链接。
+   注意这里**不**伪造 id 的真实值 —— 冒一个假 id（比如 -1）会让前端拿去 openUser，
+   反倒多出一次一定失败的请求。 */
+function anonOut(row){
+  if (!row || !row.is_anon) return row;
+  return { ...row, username: ANON_NAME, avatar: ANON_AVATAR, bio: '', role: null, author_id: 0, anon: 1 };
+}
+// 一批行统一抹平
+const anonRows = (rows) => (rows || []).map(anonOut);
 
 /* ---------------- 点赞与转帖（0009）----------------
    两件事刻意分开存：
@@ -301,7 +373,7 @@ async function buildQuote(env, q){
   if (id <= 0) return null;
   if (type === 'thread') {
     const row = await env.DB.prepare(
-      `SELECT t.id,t.title,t.body,t.created_at,t.sensitive,u.username
+      `SELECT t.id,t.title,t.body,t.created_at,t.sensitive,t.is_anon,u.username
          FROM threads t JOIN users u ON u.id=t.author_id WHERE t.id=?`).bind(id).first();
     if (!row) return null;
     return {
@@ -309,12 +381,15 @@ async function buildQuote(env, q){
       snapshot: JSON.stringify({
         t:'thread', id, user:row.username, title:row.title,
         excerpt: plainExcerpt(row.body, QUOTE_EXCERPT), at:row.created_at,
-        sensitive: row.sensitive ? 1 : 0
+        sensitive: row.sensitive ? 1 : 0,
+        // 被引用的原内容如果是匿名帖，引用卡上也不能冒出一个名字 ——
+        // 「引用卡」是内容扩散出去的主要途径，漏在这里等于匿名白做。
+        anon: row.is_anon ? 1 : 0
       })
     };
   }
   const row = await env.DB.prepare(
-    `SELECT p.id,p.thread_id,p.body,p.created_at,p.sensitive,u.username
+    `SELECT p.id,p.thread_id,p.body,p.created_at,p.sensitive,p.is_anon,u.username
        FROM posts p JOIN users u ON u.id=p.author_id WHERE p.id=?`).bind(id).first();
   if (!row) return null;
   return {
@@ -322,7 +397,8 @@ async function buildQuote(env, q){
     snapshot: JSON.stringify({
       t:'post', id, tid:row.thread_id, user:row.username,
       excerpt: plainExcerpt(row.body, QUOTE_EXCERPT), at:row.created_at,
-      sensitive: row.sensitive ? 1 : 0
+      sensitive: row.sensitive ? 1 : 0,
+      anon: row.is_anon ? 1 : 0
     })
   };
 }
@@ -445,6 +521,21 @@ async function pollTargetAlive(env, type, id){
   try{
     const r = await env.DB.prepare(`SELECT id FROM ${tbl} WHERE id=?`).bind(id).first();
     return !!r;
+  }catch(e){ return false }
+}
+
+/* 目标内容所在的主题是否已锁定。
+   锁定主题里回复都被挡住了，投票却还能继续投，等于「讨论到此为止」只落实了一半 ——
+   而且投票结果会被后来者改写，比多一条回复影响更大。 */
+async function pollTargetLocked(env, type, id){
+  try{
+    if(type === 'thread'){
+      const r = await env.DB.prepare(`SELECT locked FROM threads WHERE id=?`).bind(id).first();
+      return !!(r && r.locked);
+    }
+    const r = await env.DB.prepare(
+      `SELECT t.locked locked FROM posts p JOIN threads t ON t.id=p.thread_id WHERE p.id=?`).bind(id).first();
+    return !!(r && r.locked);
   }catch(e){ return false }
 }
 
@@ -1074,6 +1165,10 @@ async function ensureSchema(env) {
   await ensureModeration(env);
   // 0011 投票：poll_votes 引用 users，同样只能排在 widen 之后
   await ensurePolls(env);
+  // 0012 用户协议：users 加两列，同理必须等 widen 重建完
+  await ensureTerms(env);
+  // 0013 匿名发布：threads / posts 加列 + 建系统「匿名用户」账号。自愈链的最后一环。
+  await ensureAnon(env);
 
   await createRoleGuards(env);
 }
@@ -1207,6 +1302,38 @@ async function ensurePolls(env) {
   for (const sql of ddl) {
     try { await env.DB.prepare(sql).run(); } catch (e) { /* 已存在，忽略 */ }
   }
+}
+
+/* 0012：用户协议同意记录。
+   users 加两列，同样只能排在 widen **之后**：带着新列重建表会让
+   `INSERT INTO users SELECT * FROM snap_users` 列数不等，整批回滚。
+   协议正文与版本号走 settings 表，不需要建表（理由见 migrations/0012_terms.sql）。 */
+async function ensureTerms(env) {
+  const ddl = [
+    `ALTER TABLE users ADD COLUMN terms_version INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE users ADD COLUMN terms_at TEXT`
+  ];
+  for (const sql of ddl) {
+    try { await env.DB.prepare(sql).run(); } catch (e) { /* 已存在，忽略 */ }
+  }
+}
+
+/* 0013：匿名发布。
+   两个新列长在 threads / posts 上，加上要往 users 里插一行系统账号 ——
+   两者都要求它排在 widen **之后**（理由见 migrations/0013_anon.sql）。
+   挂在自愈链的最后一环，前面那些 ensure* 建的表都不依赖它。 */
+async function ensureAnon(env) {
+  const ddl = [
+    `ALTER TABLE threads ADD COLUMN is_anon INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE posts ADD COLUMN is_anon INTEGER NOT NULL DEFAULT 0`,
+    `CREATE INDEX IF NOT EXISTS idx_threads_anon ON threads(is_anon)`,
+    `CREATE INDEX IF NOT EXISTS idx_posts_anon ON posts(is_anon)`
+  ];
+  for (const sql of ddl) {
+    try { await env.DB.prepare(sql).run(); } catch (e) { /* 已存在，忽略 */ }
+  }
+  // 系统「匿名用户」账号**不在这里建**，第一次真要发匿名内容时才建（见 ensureAnonUser 的说明）。
+  // 这里只负责把列补上，所以结构自检对已有数据的行数、id 序列没有任何影响。
 }
 
 /* 0007：楼中楼、编辑痕迹、用户资料。
@@ -1589,6 +1716,123 @@ async function setSetting(env, k, v, who) {
   ).bind(k, String(v), who ?? null).run();
 }
 
+/* ---------------- 用户协议（0012）----------------
+   模型只有两句话：
+     · 服务端存一份正文 + 一个**单调递增**的版本号（settings.terms_version）；
+     · 每个用户存「我同意到哪一版」（users.terms_version）。
+     terms_version < 当前版本 ⇒ 这一版他没签过 ⇒ 弹协议墙。
+   于是「站主改一次协议」＝ 版本 +1 ＝ **全体用户下一次进来都要重新同意**，不需要逐个通知。
+   站主若只想改错别字不想骚扰全站，保存时把 bump 关掉即可（版本不动，谁都不会被打断）。
+
+   两个刻意的设计：
+     ① 站主（admin）豁免。规则是站主定的，改完协议不该把自己锁在门外 ——
+        否则「改回原文案」这个入口自己都进不去，等于把自己关在外面。
+     ② 游客不在这里拦（游客没有行可写）。游客由前端按 localStorage 里记的版本拦，
+        真拦在服务端的是登录用户：requireUser 一挂，发帖/回复/点赞/上传/编辑全部 403。
+        游客就算手改 localStorage，能看到的也只是本来就公开的帖子，不会获得任何权限。 */
+
+// 默认正文。站主在管理端可随时改，改完这一份就被彻底覆盖（不会丢，因为远端仍留着旧版本也不用了）。
+const TERMS_DEFAULT_VERSION = 1;
+const TERMS_MAX_LEN = 20000;
+const DEFAULT_TERMS_TEXT = `## 一、总则
+
+1. 本站是一个个人自费搭建并维护的自由讨论社区。你访问或使用本站，即表示你已经阅读、理解并同意本协议的全部内容。
+2. 如果你不同意本协议中的任何一条，请立即停止使用本站（关闭页面即可）。
+3. 本协议会不定期更新。更新之后需要重新确认；**在你重新确认之前，将无法继续发帖、回复、点赞、上传等操作**。
+
+## 二、你的账号
+
+1. 账号由你本人注册和使用，请妥善保管密码与两步验证密钥。**任何人用你的账号做出的操作，都视为你本人的操作。**
+2. 账号不得转让、出租、出借或买卖。发现账号被盗用时，请立即修改密码并联系站主。
+3. 注册时不得使用冒充他人、引人误解或违反法律法规的用户名。
+
+## 三、你发布的内容，由你负责
+
+1. 你在本站发布的每一个字、每一张图、每一段音视频，**全部由你本人负责**。
+2. 你保证你发布的内容：① 是你原创的，或者你已经获得合法授权；② 不侵犯任何第三方的著作权、商标权、专利权、名誉权、隐私权、肖像权等权利；③ 不违反你所在国家或地区的法律法规。
+3. 因你发布的内容引发的任何纠纷、投诉、索赔、损失、行政处罚或法律责任，**一律由你本人承担**，与本站及站主无关。若因此使本站遭受损失（例如被索赔、被处罚），你有义务予以赔偿。
+4. 请勿把不适合公开的信息发到本站，包括但不限于：真实姓名与住址、身份证件、手机号、工作单位、他人的隐私、未公开的商业信息。
+
+## 四、禁止发布的内容
+
+以下内容一律禁止，违者会被删除内容、限制功能或封禁账号，恕不另行通知：
+
+- 违反任何适用法律法规的内容；
+- 色情、低俗、暴力、恐怖、赌博、毒品相关内容；
+- 涉及未成年人的不当内容（一经发现立即删除并封禁，必要时向有关部门报告）；
+- 人肉搜索、恶意曝光他人隐私、骚扰、辱骂、威胁、恐吓；
+- 诈骗、传销、虚假宣传、刷单、非法集资、非法外汇与虚拟币等违法金融信息；
+- 垃圾广告、恶意刷屏、批量注册、机器灌水；
+- 侵害他人知识产权的内容（盗版资源、破解软件、未授权转载等）；
+- 危害网络安全的内容（木马、病毒、漏洞利用、攻击工具、非法侵入他人系统等）；
+- 其他违背公序良俗，或站主认为不适合在本站出现的内容。
+
+## 五、本站的责任范围（免责声明）
+
+1. 本站**不预先审查**用户发布的内容，也没有义务对其真实性、准确性、完整性、合法性作出任何保证。
+2. 用户在本站发表的观点**仅代表发布者本人**，不代表本站或站主的立场。
+3. 在法律允许的最大范围内，**本站及站主不对下列情形承担任何责任**：① 你或其他用户因使用本站而遭受的任何直接或间接损失；② 用户之间的纠纷、债务、承诺或任何形式的私下交易；③ 因第三方（网络运营商、域名服务商、云服务商、网盘服务商等）的原因造成的服务中断、数据丢失或访问异常；④ 因黑客攻击、病毒、不可抗力、政府行为等造成的中断、延迟或数据损坏；⑤ 你因违反本协议或法律法规而被追究的责任。
+4. 本站是免费服务，不对可用性、连续性、无差错作出任何承诺。**重要内容请自行备份。**
+5. 对明显违法或违规的内容，本站有权在收到通知后或自行发现时删除、屏蔽，并保留配合有关部门调查的权利。
+
+## 六、内容的存储与授权
+
+1. 你发布的内容，著作权仍然属于你。
+2. 为了正常展示与提供服务，你授权本站以存储、复制、展示、缓存、备份、站内引用等方式使用这些内容；这项授权在你删除内容或注销账号后自然终止（用于备份与已缓存副本的部分除外）。
+3. 你删除内容后，本站可能在回收站中保留一段时间以便恢复；站主确认彻底删除后，相关文件会一并清理。
+
+## 七、关于你的信息
+
+1. 本站收集的信息很少，仅包括：用户名、密码（以不可逆的加盐哈希存储，本站看不到你的原始密码）、你自愿填写的头像与签名档、你发布的全部内容，以及为防御攻击和限流而记录的网络地址与访问时间。
+2. 本站不会把你的个人信息出售或提供给第三方，除非：你本人同意、法律法规要求，或为处理违法内容所必需。
+3. 请勿在帖子里公开自己或他人的敏感信息。
+
+## 八、处理与申诉
+
+1. 违反本协议时，站主可以视情节采取删除内容、移入回收站、限制功能、封禁账号等措施。
+2. 如果你认为处理有误，可以通过站主留下的联系方式申诉。站主会尽量回复，但不保证一定受理或更改处理结果。
+
+## 九、其他
+
+1. 本协议的解释与适用，以中华人民共和国法律为准。
+2. 本协议部分条款如被认定无效，不影响其余条款的效力。
+3. 站主保留随时修改或终止本站全部或部分服务的权利。
+4. 本协议以站点上显示的最新版本为准，最后更新时间见协议页。
+
+---
+
+如果你已经完整阅读并理解以上全部内容，并愿意遵守，请点击「同意并继续」。祝你在这里聊得开心 (๑•̀ㅂ•́)و✧`;
+
+// 一次查询读全三件套。settings 表在老库里可能还不存在（极早期库），
+// 查询失败时退回默认正文 —— 协议墙宁可显示一份「没改过的默认稿」，也不能因此 500。
+async function getTerms(env) {
+  let rows = [];
+  try {
+    rows = (await env.DB.prepare(
+      `SELECT key,value FROM settings WHERE key IN ('terms_text','terms_version','terms_updated_at')`
+    ).all()).results || [];
+  } catch (e) { rows = []; }
+  const m = {};
+  for (const r of rows) m[r.key] = r.value;
+  const raw = Number(m.terms_version);
+  const text = String(m.terms_text == null ? '' : m.terms_text).trim();
+  return {
+    text: text || DEFAULT_TERMS_TEXT,
+    version: Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : TERMS_DEFAULT_VERSION,
+    updated_at: m.terms_updated_at || null,
+    customized: !!text
+  };
+}
+
+// 站主豁免；其余人必须签过当前版本
+async function requireTerms(env, u) {
+  if (isAdmin(u)) return;
+  const t = await getTerms(env);
+  if (Number(u.terms_version || 0) >= t.version) return;
+  throw json({ error: '需要先同意用户协议', need_terms: true, terms_version: t.version }, 403);
+}
+
+
 /* ---- 存储凭证加密 ----
    WebDAV 密码不能明文躺在库里，否则库一泄露网盘就跟着沦陷。
    做法：首次用到时自动生成一个随机 master key 存进 settings，用它做 AES-GCM 加密。
@@ -1944,7 +2188,43 @@ async function route(req,env){
         maxAvatarMb=Math.round(await uploadLimitBytes(env,'avatar')/1024/1024);
       }catch(e){ }
     }
-    return json({setupNeeded:!admin, user:u?publicUser(u):null, uploadEnabled, maxUploadMb, maxAvatarMb});
+    /* 用户协议：前端靠这两位决定要不要弹协议墙。
+       只下发版本号与「这个账号签过没」，正文走 GET /api/terms 懒加载 ——
+       正常使用的请求没必要每次启动都白传十几 KB 文本。
+       游客（u 为空）一律 agreed:false，但前端对游客改用 localStorage 里的版本判断
+       （游客没有账号，服务端没地方记；详见 getTerms 上方的说明）。 */
+    const t=await getTerms(env);
+    const terms={version:t.version, agreed: u ? (isAdmin(u)||Number(u.terms_version||0)>=t.version) : false};
+    return json({setupNeeded:!admin, user:u?publicUser(u):null, uploadEnabled, maxUploadMb, maxAvatarMb, terms:{version:terms.version, agreed:terms.agreed}});
+  }
+
+  /* 用户协议正文（公开）。刻意做成懒加载：正常用户启动时只从 /api/status 拿到
+     一个版本号，十几 KB 的正文只有真要弹协议墙、或主动点「查看协议」时才拉。 */
+  if(path==='/api/terms'&&method==='GET'){
+    const t=await getTerms(env);
+    const u=await currentUser(req,env);
+    return json({
+      version:t.version, text:t.text, updated_at:t.updated_at,
+      agreed: u ? (isAdmin(u)||Number(u.terms_version||0)>=t.version) : false
+    });
+  }
+
+  /* 同意当前版本的协议。
+     刻意**不走 requireUser**：requireUser 自己就会因为「这一版还没签」抛 403，
+     那样这个接口永远调不通，协议墙就成了一堵没法翻的墙。
+     所以这里只做「已登录」这道最轻的校验，其余状态照旧要拦（封禁 / 保护状态）。 */
+  if(path==='/api/terms/agree'&&method==='POST'){
+    const u=await currentUser(req,env);
+    if(!u) return json({error:'请先登录', need_login:true},401);
+    if(u.banned) return json({error:'账号已被封禁'},403);
+    if(u.duress_state) return json({error:'该账号处于保护状态，需要站主手动恢复'},403);
+    const body=await req.json().catch(()=>({}));
+    const t=await getTerms(env);
+    // 版本对不上 = 你屏幕上那份协议已经不是现在这份了（站主刚改过）。
+    // 这时候直接写下去，等于替人签了一份他根本没看过的条款 —— 必须让他重看一遍。
+    if(Number(body.version)!==t.version) return json({error:'协议刚刚更新过，请重新阅读后再确认', need_terms:true, terms_version:t.version},409);
+    await env.DB.prepare(`UPDATE users SET terms_version=?, terms_at=datetime('now') WHERE id=?`).bind(t.version,u.id).run();
+    return json({ok:true, version:t.version});
   }
 
   if(path==='/api/setup'&&method==='POST'){
@@ -1966,9 +2246,24 @@ async function route(req,env){
     const b=await req.json(); const username=cleanUsername(b.username), password=String(b.password||'');
     if(username.length<3||password.length<8) return json({error:'用户名至少3位，密码至少8位'},400);
     if(!/^[\p{L}\p{N}_-]+$/u.test(username)) return json({error:'用户名包含不支持的字符'},400);
+    // 「匿名用户」被系统账号占着（匿名内容都挂在它名下），谁也不能注册这个名字 ——
+    // 否则真人顶着「匿名用户」发言，读者根本分不清哪条是真匿名。
+    if(username===ANON_NAME) return json({error:'该用户名为系统保留，请换一个'},400);
     // 注：此处**刻意不加**注册限流。荣荣 确认论坛要保持开放，
     // 按 IP 限流会误伤共用出口 IP 的真实访客（同一屋檐下几个人一起注册就被挡了）。
-    try{const ph=await passwordHash(password); await env.DB.prepare(`INSERT INTO users(username,password_hash) VALUES(?,?)`).bind(username,ph).run(); return json({ok:true});}
+    // 注册页上已经同意过的那一版直接记下来，免得刚签完又被协议墙弹一次；
+    // 版本对不上（站主刚好改了协议）就留 0，登录后照常弹 —— 不能替人签没看过的条款。
+    const cur=await getTerms(env);
+    const agreed=Number(b.terms_version)===cur.version ? cur.version : 0;
+    try{
+      const ph=await passwordHash(password);
+      // terms_at 走 SQL 的 datetime('now')，不用 JS 的 ISO 串：全站时间戳格式必须一致，
+      // 前端 time() 是按 'YYYY-MM-DD HH:MM:SS'（UTC）解析的，塞 ISO 串会显示成空白。
+      await env.DB.prepare(
+        `INSERT INTO users(username,password_hash,terms_version,terms_at) VALUES(?,?,?,CASE WHEN ?=1 THEN datetime('now') ELSE NULL END)`
+      ).bind(username,ph,agreed,agreed?1:0).run();
+      return json({ok:true});
+    }
     catch(e){return json({error:'用户名已存在'},409)}
   }
 
@@ -2103,6 +2398,8 @@ async function route(req,env){
     const name=cleanUsername(b.username);
     if(name.length<3) return json({error:'用户名至少 3 位'},400);
     if(!/^[\p{L}\p{N}_-]+$/u.test(name)) return json({error:'用户名包含不支持的字符'},400);
+    // 同注册：系统保留名，改过去就会和匿名内容撞名（改名接口原本会回一句含糊的「已被占用」）
+    if(name===ANON_NAME) return json({error:'该用户名为系统保留，请换一个'},400);
     if(name===u.username) return json({error:'新用户名与当前相同'},400);
     await confirmSensitive(env, u, b);
     try{
@@ -2206,6 +2503,15 @@ async function route(req,env){
     const id=Number(um[1]);
     const u=await env.DB.prepare(`SELECT id,username,role,bio,avatar,created_at,banned,duress_state,duress_at FROM users WHERE id=?`).bind(id).first();
     if(!u) return json({error:'用户不存在'},404);
+    // 系统「匿名用户」账号没有主页：它名下的帖子全是匿名的，
+    // 开一个主页等于把「本站所有匿名内容」打包摆在一个地址上 —— 那就不叫匿名了。
+    if(u.username===ANON_NAME) return json({error:'用户不存在'},404);
+    // 匿名内容不归属任何账号：把 author_id 是系统账号的那些从 TA 的主页里摘掉。
+    // 不去掉的话，「某人主页里突然多出一条匿名帖」就是一次身份泄露。
+    // 统计数字同理 —— 数着数着也能数出来（发帖数对不上）。
+    // 两张表都有 is_anon，这里必须带表前缀 —— 不写前缀 SQLite 直接报 ambiguous column
+    const notAnonT = ` AND t.is_anon=0`;
+    const notAnonP = ` AND p.is_anon=0`;
     // ?q= 只在这个人自己的内容里搜（主页里的「翻他以前发过什么」）。
     // 统计仍然是全量，不跟着关键词变 —— 那是「他一共发过多少」，不是「搜到多少」。
     const kw=String(new URL(req.url).searchParams.get('q')||'').trim().slice(0,60);
@@ -2217,16 +2523,16 @@ async function route(req,env){
       arg=[pat,pat]; parg=[pat];
     }
     const limit=kw?50:20;      // 搜索时多给一些，翻旧帖才不用一趟趟试
-    let ts=env.DB.prepare(`SELECT t.id,t.title,t.created_at,t.pinned,b.name board_name,COUNT(p.id) replies FROM threads t LEFT JOIN posts p ON p.thread_id=t.id LEFT JOIN boards b ON b.id=t.board_id WHERE t.author_id=?${tWhere} GROUP BY t.id ORDER BY t.id DESC LIMIT ${limit}`).bind(id,...arg);
-    let ps=env.DB.prepare(`SELECT p.id,p.body,p.created_at,p.thread_id,t.title thread_title FROM posts p JOIN threads t ON t.id=p.thread_id WHERE p.author_id=?${pWhere} ORDER BY p.id DESC LIMIT ${limit}`).bind(id,...parg);
+    let ts=env.DB.prepare(`SELECT t.id,t.title,t.created_at,t.pinned,b.name board_name,COUNT(p.id) replies FROM threads t LEFT JOIN posts p ON p.thread_id=t.id LEFT JOIN boards b ON b.id=t.board_id WHERE t.author_id=?${notAnonT}${tWhere} GROUP BY t.id ORDER BY t.id DESC LIMIT ${limit}`).bind(id,...arg);
+    let ps=env.DB.prepare(`SELECT p.id,p.body,p.created_at,p.thread_id,t.title thread_title FROM posts p JOIN threads t ON t.id=p.thread_id WHERE p.author_id=?${notAnonP}${pWhere} ORDER BY p.id DESC LIMIT ${limit}`).bind(id,...parg);
     const [threads,posts]=await Promise.all([ts.all(),ps.all()]);
     // 获赞数 = TA 的主题收到的赞 + TA 的回复收到的赞（两条分开算，likes 是同一张表按 type 区分）
     const stats=await env.DB.prepare(`SELECT
-        (SELECT COUNT(*) FROM threads WHERE author_id=?) threads,
-        (SELECT COUNT(*) FROM posts WHERE author_id=?) replies,
-        (SELECT COUNT(*) FROM likes l JOIN threads t ON t.id=l.target_id WHERE l.target_type='thread' AND t.author_id=?)
+        (SELECT COUNT(*) FROM threads WHERE author_id=? AND is_anon=0) threads,
+        (SELECT COUNT(*) FROM posts WHERE author_id=? AND is_anon=0) replies,
+        (SELECT COUNT(*) FROM likes l JOIN threads t ON t.id=l.target_id WHERE l.target_type='thread' AND t.author_id=? AND t.is_anon=0)
          +
-        (SELECT COUNT(*) FROM likes l JOIN posts p ON p.id=l.target_id WHERE l.target_type='post' AND p.author_id=?) likes`).bind(id,id,id,id).first();
+        (SELECT COUNT(*) FROM likes l JOIN posts p ON p.id=l.target_id WHERE l.target_type='post' AND p.author_id=? AND p.is_anon=0) likes`).bind(id,id,id,id).first();
     return json({
       user:{id:u.id,username:u.username,role:u.role,bio:u.bio||'',avatar:u.avatar||null,created_at:u.created_at,banned:u.banned?1:0,duress_state:u.duress_state?1:0,duress_at:u.duress_at||null},
       stats:{threads:Number(stats?.threads||0),replies:Number(stats?.replies||0),likes:Number(stats?.likes||0)},
@@ -2308,11 +2614,12 @@ async function route(req,env){
     const page=Math.min(Math.max(parseInt(sp.get('page')||'',10)||1,1),pages);
     // t.sensitive 也要带出来：列表要显示「限制」角标，并在用户开了模糊时把预览盖住
     // quote_ref / quote_snapshot：这条是不是转帖别人得来的（列表里要显示一个「转帖」角标）
-    const sql=`SELECT t.id,t.title,t.body,t.pinned,t.locked,t.created_at,t.updated_at,t.edited_at,t.author_id,t.board_id,t.sensitive,t.protected,t.quote_ref,t.quote_snapshot,u.username,u.avatar,b.name board_name,COUNT(p.id) replies FROM threads t JOIN users u ON u.id=t.author_id LEFT JOIN posts p ON p.thread_id=t.id LEFT JOIN boards b ON b.id=t.board_id ${wSql} GROUP BY t.id ORDER BY t.pinned DESC,t.updated_at DESC,t.id DESC LIMIT ? OFFSET ?`;
+    const sql=`SELECT t.id,t.title,t.body,t.pinned,t.locked,t.created_at,t.updated_at,t.edited_at,t.author_id,t.board_id,t.sensitive,t.protected,t.quote_ref,t.quote_snapshot,t.is_anon,u.username,u.avatar,b.name board_name,COUNT(p.id) replies FROM threads t JOIN users u ON u.id=t.author_id LEFT JOIN posts p ON p.thread_id=t.id LEFT JOIN boards b ON b.id=t.board_id ${wSql} GROUP BY t.id ORDER BY t.pinned DESC,t.updated_at DESC,t.id DESC LIMIT ? OFFSET ?`;
     // 末尾的 t.id DESC 是必需的：同一秒发的帖 updated_at 完全相同，
     // 没有稳定的 tie-breaker 时 SQLite 的行序不作保证，翻页就可能重页或漏帖。
     const rows=await env.DB.prepare(sql).bind(...arg,limit,(page-1)*limit).all();
-    const results=rows.results;
+    // 匿名内容在这里统一「抹平」：名字、头像、author_id 三处一起改，漏一处就会露馅
+    const results=anonRows(rows.results);
     // 点赞 / 转帖计数：列表是公开接口，登录了才顺带算「我自己赞过没」
     const viewer=(await currentUser(req,env))?.id||0;
     const rm=await reactionMap(env,'thread',results.map(t=>t.id),viewer);
@@ -2347,11 +2654,16 @@ async function route(req,env){
     // quote：转帖 / 引用别人的主题或回复。目标不存在时静默丢弃（帖子照样发出去），
     // 快照在这里由服务端生成，前端传什么都改不了别人看到的内容。
     const quote=await buildQuote(env, b.quote);
-    const r=await env.DB.prepare(`INSERT INTO threads(title,author_id,body,board_id,sensitive,quote_ref,quote_snapshot) VALUES(?,?,?,?,?,?,?)`).bind(title,u.id,body,boardId,sensitive,quote?quote.ref:null,quote?quote.snapshot:null).run();
+    // 匿名发布（0013）：author_id 落到系统「匿名用户」账号上，库里不留下任何真实用户线索。
+    // 只有登录用户能匿名（这一行前面已经过了 requireUser），所以不存在「游客匿名」这条歧义。
+    const anon=toFlag(b.anon);
+    const anonId=anon ? await anonUserId(env) : 0;
+    if(anon && !anonId) return json({error:'匿名功能还没准备好，请稍后再试'},503);
+    const r=await env.DB.prepare(`INSERT INTO threads(title,author_id,body,board_id,sensitive,quote_ref,quote_snapshot,is_anon) VALUES(?,?,?,?,?,?,?,?)`).bind(title,anon?anonId:u.id,body,boardId,sensitive,quote?quote.ref:null,quote?quote.snapshot:null,anon).run();
     const tid=r.meta.last_row_id;
     // 投票和正文同一条请求建出来：分开的话「发帖成功但投票没挂上」没法解释
     if(poll) await attachPoll(env,'thread',tid,poll);
-    return json({ok:true,id:tid,sensitive,quote:quote?quote.ref:null,poll:poll?1:0});
+    return json({ok:true,id:tid,sensitive,quote:quote?quote.ref:null,poll:poll?1:0,anon});
   }
 
   const tm=path.match(/^\/api\/threads\/(\d+)$/);
@@ -2458,7 +2770,9 @@ async function route(req,env){
   const adm=path.match(/^\/api\/admin\/([\w-]+)$/);
 
   if(tm&&method==='GET'){
-    const id=Number(tm[1]); const thread=await env.DB.prepare(`SELECT t.*,u.username,u.avatar,u.bio,b.name board_name FROM threads t JOIN users u ON u.id=t.author_id LEFT JOIN boards b ON b.id=t.board_id WHERE t.id=?`).bind(id).first(); if(!thread) return json({error:'主题不存在'},404);
+    const id=Number(tm[1]); const threadRaw=await env.DB.prepare(`SELECT t.*,u.username,u.avatar,u.bio,b.name board_name FROM threads t JOIN users u ON u.id=t.author_id LEFT JOIN boards b ON b.id=t.board_id WHERE t.id=?`).bind(id).first(); if(!threadRaw) return json({error:'主题不存在'},404);
+    // 匿名内容在这里抹平：作者名、头像、author_id 全部换成匿名那一套（见 anonOut）
+    const thread=anonOut(threadRaw);
     // reply_to 一并取出：前端靠它把平层回复重排成楼中楼
     const posts=await env.DB.prepare(`SELECT p.*,u.username,u.role,u.avatar,u.bio FROM posts p JOIN users u ON u.id=p.author_id WHERE p.thread_id=? ORDER BY p.created_at,p.id`).bind(id).all();
     // 点赞 / 转帖计数：主题一条 + 本页所有回复一批，各两条查询搞定，不逐条 N+1
@@ -2475,7 +2789,7 @@ async function route(req,env){
       thread:{...thread,
         likes:Number(tRm.get(thread.id)?.likes||0), liked:Number(tRm.get(thread.id)?.liked||0),
         reposts:Number(tQm.get(thread.id)||0), poll:tPl.get(thread.id)||null},
-      posts:posts.results.map(p=>({...p,
+      posts:anonRows(posts.results).map(p=>({...p,
         likes:Number(pRm.get(p.id)?.likes||0), liked:Number(pRm.get(p.id)?.liked||0),
         reposts:Number(pQm.get(p.id)||0), poll:pPl.get(p.id)||null})),
       att
@@ -2568,6 +2882,9 @@ async function route(req,env){
     if(!p) return json({error:'这个投票已经不存在了'},404);
     // 原内容被删 / 进了回收站：票还在库里，但界面上根本看不到它 —— 别让人白投
     if(!(await pollTargetAlive(env, p.target_type, p.target_id))) return json({error:'这条内容已经不在了'},404);
+    // 锁定的主题不再收新票（站主例外：治理动作要留一条路，跟回复接口的判法一致）
+    if(!isAdmin(u) && await pollTargetLocked(env, p.target_type, p.target_id))
+      return json({error:'该主题已锁定，投票已结束'},403);
     // 一人一次：先查是为了给一句人话提示，真正兜底的是 poll_ballots 上的唯一索引
     // （并发时第二次插入选票会撞上它，只有一次生效）
     const done=await env.DB.prepare(`SELECT id FROM poll_ballots WHERE poll_id=? AND user_id=?`).bind(pid,u.id).first();
@@ -2647,9 +2964,13 @@ async function route(req,env){
   // 编辑主题：作者本人（主题未锁时）或管理员。标题和正文都能改。
   if(tm&&method==='PATCH'){
     const u=await requireUser(req,env), id=Number(tm[1]), b=await req.json();
-    const t=await env.DB.prepare(`SELECT id,author_id,locked,title,body,sensitive,protected FROM threads WHERE id=?`).bind(id).first();
+    const t=await env.DB.prepare(`SELECT id,author_id,locked,title,body,sensitive,protected,is_anon FROM threads WHERE id=?`).bind(id).first();
     if(!t) return json({error:'主题不存在'},404);
     const isAdmin_=isAdmin(u);
+    // 匿名内容没有主人（author_id 是系统账号），所以「作者本人」这条通道对它一律关闭。
+    // 拦在这里而不是靠 author_id 不匹配，是为了给一句说得清的话 ——
+    // 否则用户看到的是「只能编辑自己的主题」，而那条帖子看起来就是他自己发的。
+    if(t.is_anon && !isAdmin_) return json({error:'匿名内容不归属任何账号，发出去之后无法编辑'},403);
     if(t.author_id!==u.id && !isAdmin_) return json({error:'只能编辑自己的主题'},403);
     // 受保护的内容所有权已经交给站主，原作者连自己的帖也改不动
     if(t.protected && !isAdmin_) return json({error:'这条内容已被站主保护，原作者不能再修改'},403);
@@ -2679,11 +3000,15 @@ async function route(req,env){
   // 删除主题：作者本人或管理员。删除 = 移入回收站，作者与管理员的区别只在「谁能恢复」。
   if(tm&&method==='DELETE'){
     const u=await requireUser(req,env); const id=Number(tm[1]);
-    const t=await env.DB.prepare(`SELECT id,author_id,protected FROM threads WHERE id=?`).bind(id).first();
+    const t=await env.DB.prepare(`SELECT id,author_id,protected,is_anon FROM threads WHERE id=?`).bind(id).first();
     if(!t) return json({error:'主题不存在'},404);
-    if(t.author_id!==u.id && u.role!=='admin') return json({error:'只能删除自己的主题'},403);
+    // 匿名内容没有主人，删不了「自己的」，只剩下治理这条路（子管理员及以上）
+    if(t.is_anon && !isMod(u)) return json({error:'匿名内容不归属任何账号，只能由管理员删除'},403);
+    // 子管理员也放行：帖子页上那颗「删除主题」按钮对他们本来就可见（isMine 把 can_mod 也算进来），
+    // 而 MOD_ACTIONS 里本来就有 deleteThread —— 接口只认「作者或站主」时的结果是点了必然吃 403。
+    if(t.author_id!==u.id && !isMod(u)) return json({error:'只能删除自己的主题'},403);
     // 受保护 = 所有权在站主手上，连作者本人也删不掉（子管理员更不行）
-    if(t.protected && u.role!=='admin') return json({error:'这条内容已被站主保护，只有站主能删除'},403);
+    if(t.protected && !isAdmin(u)) return json({error:'这条内容已被站主保护，只有站主能删除'},403);
     // 先收进回收站：主题 + 它下面所有回复（含别人的），随时可以放回来
     const tr=await trashThread(env, id, u);
     // 赞挂在内容上、不是外键，必须自己清（先清回复的，再清主题的）
@@ -2699,10 +3024,12 @@ async function route(req,env){
   // 删除回复：作者本人或管理员（同样是移入回收站）
   if(pdm&&method==='DELETE'){
     const u=await requireUser(req,env); const id=Number(pdm[1]);
-    const p=await env.DB.prepare(`SELECT id,author_id,protected FROM posts WHERE id=?`).bind(id).first();
+    const p=await env.DB.prepare(`SELECT id,author_id,protected,is_anon FROM posts WHERE id=?`).bind(id).first();
     if(!p) return json({error:'回复不存在'},404);
-    if(p.author_id!==u.id && u.role!=='admin') return json({error:'只能删除自己的回复'},403);
-    if(p.protected && u.role!=='admin') return json({error:'这条内容已被站主保护，只有站主能删除'},403);
+    if(p.is_anon && !isMod(u)) return json({error:'匿名内容不归属任何账号，只能由管理员删除'},403);
+    // 同「删除主题」：子管理员在帖子页看到的删除按钮本来就包括别人的回复（MOD_ACTIONS 有 deletePost）
+    if(p.author_id!==u.id && !isMod(u)) return json({error:'只能删除自己的回复'},403);
+    if(p.protected && !isAdmin(u)) return json({error:'这条内容已被站主保护，只有站主能删除'},403);
     const trashId=await trashPost(env, id, u, null);
     await purgeLikes(env,'post',id);
     // 别人回复它时会置空 reply_to（ON DELETE SET NULL），楼不会塌，只是变回顶层
@@ -2713,9 +3040,10 @@ async function route(req,env){
   // 编辑回复：作者本人或管理员。锁定主题里的回复只有管理员能改。
   if(pdm&&method==='PATCH'){
     const u=await requireUser(req,env), id=Number(pdm[1]), b=await req.json();
-    const p=await env.DB.prepare(`SELECT p.id,p.author_id,p.body,p.thread_id,p.sensitive,p.protected,t.locked FROM posts p JOIN threads t ON t.id=p.thread_id WHERE p.id=?`).bind(id).first();
+    const p=await env.DB.prepare(`SELECT p.id,p.author_id,p.body,p.thread_id,p.sensitive,p.protected,p.is_anon,t.locked FROM posts p JOIN threads t ON t.id=p.thread_id WHERE p.id=?`).bind(id).first();
     if(!p) return json({error:'回复不存在'},404);
     const isAdmin_=isAdmin(u);
+    if(p.is_anon && !isAdmin_) return json({error:'匿名内容不归属任何账号，发出去之后无法编辑'},403);
     if(p.author_id!==u.id && !isAdmin_) return json({error:'只能编辑自己的回复'},403);
     // 受保护的回复所有权在站主手上（主题受保护不算，那条回复得自己也被保护）
     if(p.protected && !isAdmin_) return json({error:'这条回复已被站主保护，原作者不能再修改'},403);
@@ -2768,10 +3096,14 @@ async function route(req,env){
     // quote：回复里也能挂一张引用卡（引用别的主题，或同帖里的某条回复）。
     // 目标不存在就丢弃引用，回复本身照发 —— 引用只是附加信息，不该让话发不出去。
     const quote=await buildQuote(env, b.quote);
-    const pr=await env.DB.prepare(`INSERT INTO posts(thread_id,author_id,body,reply_to,sensitive,quote_ref,quote_snapshot) VALUES(?,?,?,?,?,?,?)`).bind(id,u.id,body,replyTo,sensitive,quote?quote.ref:null,quote?quote.snapshot:null).run();
+    // 匿名回复：和匿名发帖同一套（author_id 落到系统账号，库里留不下线索）
+    const anon=toFlag(b.anon);
+    const anonId=anon ? await anonUserId(env) : 0;
+    if(anon && !anonId) return json({error:'匿名功能还没准备好，请稍后再试'},503);
+    const pr=await env.DB.prepare(`INSERT INTO posts(thread_id,author_id,body,reply_to,sensitive,quote_ref,quote_snapshot,is_anon) VALUES(?,?,?,?,?,?,?,?)`).bind(id,anon?anonId:u.id,body,replyTo,sensitive,quote?quote.ref:null,quote?quote.snapshot:null,anon).run();
     if(poll) await attachPoll(env,'post',pr.meta.last_row_id,poll);
     await env.DB.prepare(`UPDATE threads SET updated_at=datetime('now') WHERE id=?`).bind(id).run();
-    return json({ok:true,replyTo,sensitive,quote:quote?quote.ref:null,poll:poll?1:0});
+    return json({ok:true,replyTo,sensitive,quote:quote?quote.ref:null,poll:poll?1:0,anon});
   }
 
   /* ---- 管理端 ----
@@ -2855,6 +3187,52 @@ async function route(req,env){
 
     // --- 以下为管理员专属：子管理员一律 403 ---
     await requireAdmin(req,env);
+
+    /* ================= 用户协议：站主专属 =================
+       改协议＝对全站所有人立规矩，比删一条帖子重得多，所以只给站主。
+       子管理员对内容有治理权，但无权替所有人重新定义规则。 */
+
+    // 当前正文 + 版本号 + 同意情况（含「谁还没签」名单）
+    if(action==='terms'&&method==='GET'){
+      const t=await getTerms(env);
+      // 系统「匿名用户」账号不算人：把它算进来，站主会永远看到「差一个人没签协议」，
+      // 而那位「人」根本不存在、也永远不会点同意。
+      const total=Number((await env.DB.prepare(`SELECT COUNT(*) n FROM users WHERE username<>?`).bind(ANON_NAME).first())?.n||0);
+      // 统计「已同意」时把管理员算进去：站主自己豁免，不然永远显示差一个人没签
+      const agreed=Number((await env.DB.prepare(
+        `SELECT COUNT(*) n FROM users WHERE username<>? AND (role='admin' OR COALESCE(terms_version,0)>=?)`
+      ).bind(ANON_NAME, t.version).first())?.n||0);
+      const pending=(await env.DB.prepare(
+        `SELECT id,username,role,terms_version FROM users
+          WHERE username<>? AND role!='admin' AND COALESCE(terms_version,0)<?
+          ORDER BY COALESCE(terms_version,0), id LIMIT 50`
+      ).bind(ANON_NAME, t.version).all()).results;
+      return json({
+        text:t.text, version:t.version, updated_at:t.updated_at, customized:t.customized,
+        default_text:DEFAULT_TERMS_TEXT, max_len:TERMS_MAX_LEN,
+        stats:{ total, agreed, pending:Math.max(total-agreed,0) }, pending
+      });
+    }
+
+    // 保存协议正文。默认**升版本**：全站所有人下次进入都要重新确认。
+    if(action==='terms'&&method==='POST'){
+      const body=String(b.text==null?'':b.text).replace(/\r\n/g,'\n').trim();
+      if(!body) return json({error:'协议正文不能为空'},400);
+      if(body.length>TERMS_MAX_LEN) return json({error:`协议正文最多 ${TERMS_MAX_LEN} 字`},400);
+      // bump 缺省为真（前端默认勾着「要求所有人重新确认」）；显式传 0 时只改文字、不打断任何人
+      const bump=b.bump===undefined ? true : !!toFlag(b.bump);
+      const cur=await getTerms(env);
+      // 正文一个字都没变就不动版本：站主连点两下「保存」不该让全站多弹一次
+      const changed=body!==cur.text;
+      const next=(bump && changed) ? cur.version+1 : cur.version;
+      await setSetting(env,'terms_text',body,me_.id);
+      if(changed){
+        // 手写 'YYYY-MM-DD HH:MM:SS'（UTC）而不是 ISO 串，与全站时间戳格式保持一致
+        await setSetting(env,'terms_updated_at',new Date().toISOString().slice(0,19).replace('T',' '),me_.id);
+      }
+      await setSetting(env,'terms_version',String(next),me_.id);
+      return json({ok:true, version:next, bumped:next>cur.version, changed});
+    }
 
     /* ================= 附件存储：站主专属 =================
        整套「备份 → 确认 → 清除 → 还原」都收在这里。
@@ -3148,10 +3526,13 @@ async function route(req,env){
       // avatar 必须带上：管理中心那一行要显示真实头像，
       // 少了它前端只能退化成「用户名首字」的色块，看着像头像全丢了。
       // duress_*：管理中心要显示「保护中」并能一键解除，也顺带告诉站主这人设过胁迫密码。
-      const r=await env.DB.prepare(`SELECT id,username,role,banned,created_at,totp_enabled,avatar,duress_state,duress_at,duress_by,CASE WHEN duress_hash IS NULL THEN 0 ELSE 1 END duress_set FROM users ORDER BY CASE role WHEN 'admin' THEN 0 WHEN 'moderator' THEN 1 ELSE 2 END, id DESC LIMIT 200`).all();
+      // 系统「匿名用户」账号不进这张表：它不是一个能管理的账号
+      // （封禁/改密/改角色对它都没意义，站主点下去只会一头雾水）。
+      const r=await env.DB.prepare(`SELECT id,username,role,banned,created_at,totp_enabled,avatar,duress_state,duress_at,duress_by,CASE WHEN duress_hash IS NULL THEN 0 ELSE 1 END duress_set FROM users WHERE username<>? ORDER BY CASE role WHEN 'admin' THEN 0 WHEN 'moderator' THEN 1 ELSE 2 END, id DESC LIMIT 200`).bind(ANON_NAME).all();
       return json(r.results)
     }
-    if(action==='posts'&&method==='GET'){const r=await env.DB.prepare(`SELECT p.id,p.body,p.created_at,p.thread_id,p.sensitive,p.protected,t.title,u.username,u.avatar FROM posts p JOIN threads t ON t.id=p.thread_id JOIN users u ON u.id=p.author_id ORDER BY p.id DESC LIMIT 200`).all(); return json(r.results)}
+    // 最近内容：匿名帖在这里也只显示「匿名用户 + 空白头像」，站主同样查不到是谁发的
+    if(action==='posts'&&method==='GET'){const r=await env.DB.prepare(`SELECT p.id,p.body,p.created_at,p.thread_id,p.sensitive,p.protected,p.is_anon,t.title,u.username,u.avatar FROM posts p JOIN threads t ON t.id=p.thread_id JOIN users u ON u.id=p.author_id ORDER BY p.id DESC LIMIT 200`).all(); return json(anonRows(r.results))}
 
     // 管理员重置任意用户密码（该用户所有会话立即失效）
     if(action==='set-password'&&method==='POST'){

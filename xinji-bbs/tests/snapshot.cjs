@@ -53,6 +53,9 @@ var THREADS=[
   // 带投票的一条：列表里只显示一句摘要（「3 人参与 · 单选」）
   {id:5,title:'快放假了！！！',body:'要去山里住几天',author_id:3,username:'别想妄图窥探神',avatar:'emoji:🦊',pinned:0,locked:0,board_name:'',created_at:'2026-09-18 20:00:00',updated_at:'2026-09-18 20:00:00',replies:1,att:{},quote_ref:'thread:3',likes:26,liked:1,reposts:4,poll:{id:21,question:'放假去哪儿玩比较好呢？',multi:0,total:3,voted:0,mine:[],options:[{id:71,label:'山里',n:2},{id:72,label:'海边',n:1}]}},
   {id:6,title:'Reading',body:'在读《设计中的设计》',author_id:4,username:'mj',avatar:'',pinned:0,locked:0,board_name:'技术',created_at:'2026-09-17 20:00:00',updated_at:'2026-09-17 20:00:00',replies:0,att:{},likes:0,liked:0,reposts:0},
+  // 匿名主题：库里不记作者，输出层把 author_id 抹成 0 —— 头像必须是**空白**圆、名字点不动。
+  // 这条是专门盯新组件的（改坏了截图立刻现形），别删。
+  {id:8,title:'匿名问一句：你们真的会看置顶帖吗',body:'不想暴露账号，就用匿名发一条。\\n头像应该是空白的，名字也应该点不动。',author_id:0,username:'匿名用户',avatar:'anon:',anon:1,pinned:0,locked:0,board_name:'闲聊',created_at:'2026-09-15 21:00:00',updated_at:'2026-09-15 21:00:00',replies:2,att:{},likes:3,liked:0,reposts:0},
   // ↓ 专门用来盯「长网址顶破布局」：假数据一直太乖（清一色中文，中文会自动换行），
   //   于是真机上一条含 58 字符网址的帖子就把 grid 列撑到 477px、整页横向溢出。
   //   这条数据就是那次的复现样本，别删。
@@ -60,6 +63,8 @@ var THREADS=[
 ];
 // 回收站里的几类条目：主题 / 回复 / 账号
 var TRASH_ITEMS=[
+  // 匿名内容：作者自己删不掉，进回收站后作者名显示「匿名用户」（作者 id 为 0，点不动）
+  {id:4,kind:'thread',target_id:8,parent_id:null,author_id:0,author_name:'匿名用户',title:'匿名发的主题被管理移除了',excerpt:'匿名内容发出之后连作者本人也改不了、删不了',item_count:1,deleted_by_name:'rongrong',by_owner:0,was_protected:0,deleted_at:'2026-09-22 20:30:00',can_restore:1,can_purge:1},
   {id:3,kind:'thread',target_id:3,parent_id:null,author_id:1,author_name:'rongrong',title:'一篇被删掉的长标题主题，用来看看回收站里的换行',excerpt:'正文摘要',item_count:5,deleted_by_name:'rongrong',by_owner:1,was_protected:1,deleted_at:'2026-09-22 20:10:00',can_restore:1,can_purge:1},
   {id:2,kind:'post',target_id:11,parent_id:3,author_id:2,author_name:'tearsvow',title:'',excerpt:'这条是管理员移除的，作者自己不能恢复',item_count:1,deleted_by_name:'rongrong',by_owner:0,was_protected:0,deleted_at:'2026-09-22 19:40:00',can_restore:1,can_purge:1},
   {id:1,kind:'user',target_id:9,parent_id:null,author_id:9,author_name:'ooo',title:'ooo',excerpt:'3 个主题 · 12 条回复 · 4 个附件',item_count:16,deleted_by_name:'rongrong',by_owner:0,was_protected:0,deleted_at:'2026-09-21 09:00:00',can_restore:1,can_purge:1}
@@ -73,7 +78,11 @@ var THREAD_DETAIL={
     // 一条「还没投票 + 多选」的投票：选项是可点的，不显示票数
     {id:12,author_id:1,username:'rongrong',avatar:'emoji:🐱',bio:'在做一个安静的小论坛',body:'补上媒体与禁用态。视频、音频、加载骨架、破图占位四种都要能看清。',created_at:'2026-09-20 19:10:00',reply_to:11,role:'admin',edited_at:'2026-09-20 19:30:00',likes:0,liked:0,reposts:1,quote_ref:null,quote_snapshot:null,poll:{id:22,question:'下面这些你平时会用到哪些？',multi:1,total:0,voted:0,mine:[],options:[{id:81,label:'图片',n:0},{id:82,label:'视频',n:0},{id:83,label:'音频',n:0}]}},
     // 一条带引用卡的回复：顺便看看引用卡在楼中楼里的排版
-    {id:13,author_id:4,username:'mj',avatar:'',bio:'',body:'同感 ✨',created_at:'2026-09-20 19:20:00',reply_to:12,role:'user',likes:1,liked:1,reposts:0,quote_ref:'post:11',quote_snapshot:JSON.stringify({t:'post',id:11,tid:3,user:'tearsvow',excerpt:'说的是。深浅拉开之后，视线落点也清楚多了。',at:'2026-09-20 19:02:00',sensitive:0})}
+    {id:13,author_id:4,username:'mj',avatar:'',bio:'',body:'同感 ✨',created_at:'2026-09-20 19:20:00',reply_to:12,role:'user',likes:1,liked:1,reposts:0,quote_ref:'post:11',quote_snapshot:JSON.stringify({t:'post',id:11,tid:3,user:'tearsvow',excerpt:'说的是。深浅拉开之后，视线落点也清楚多了。',at:'2026-09-20 19:02:00',sensitive:0})},
+    // 匿名回复：author_id=0，头像空白、名字点不动，也没有「编辑」按钮（作者自己都改不了）
+    {id:14,author_id:0,username:'匿名用户',avatar:'anon:',anon:1,bio:'',role:null,body:'用匿名回一条。顺手试试**加粗**和一个长一点的句子，看看手机上会不会挤出去。',created_at:'2026-09-20 19:26:00',reply_to:11,likes:0,liked:0,reposts:0,quote_ref:null,quote_snapshot:null},
+    // 引用一条匿名内容：引用卡里的头像与名字同样必须是空白 / 不可点（不能反查出作者）
+    {id:15,author_id:4,username:'mj',avatar:'',bio:'',body:'引用匿名也不能露馅。',created_at:'2026-09-20 19:28:00',reply_to:14,role:'user',likes:0,liked:0,reposts:0,quote_ref:'post:14',quote_snapshot:JSON.stringify({t:'post',id:14,tid:3,user:'匿名用户',anon:1,excerpt:'用匿名回一条。顺手试试加粗和一个长一点的句子。',at:'2026-09-20 19:26:00',sensitive:0})}
   ],
   att:{1:{mime:'image/png',w:1200,h:800}}
 };
@@ -85,10 +94,16 @@ var USERS=[
   {id:5,username:'ooo',role:'user',banned:1,totp_enabled:0,avatar:'emoji:🐧',duress_state:0,duress_set:0}
 ];
 var BOARDS=[{id:7,name:'技术',threads:2,description:'折腾与折腾之间的空档',creator:'rongrong'},{id:8,name:'闲聊',threads:1,creator:'tearsvow'},{id:9,name:'摄影',threads:0}];
+// 用户协议正文：标题 + 有序列表 + 加粗 + 一条长网址。
+// 长网址是故意的 —— 它就是「协议框会不会被顶破」的探针（中文站最容易漏这一条）。
+var TERMS_TEXT='## 一、总则\\n\\n1. 本站是一个个人自费搭建并维护的自由讨论社区。你访问或使用本站，即表示你已经阅读、理解并同意本协议的全部内容。\\n2. 如果你不同意本协议中的任何一条，请立即停止使用本站，关闭页面即可。\\n3. 本协议会不定期更新，更新之后需要重新确认。\\n\\n## 二、你发布的内容，由你负责\\n\\n1. 你在本站发布的每一个字、每一张图、每一段音视频，**全部由你本人负责**。\\n2. 因你发布的内容引发的任何纠纷、投诉、索赔、损失或法律责任，一律由你本人承担，与本站及站主无关。\\n3. 请勿把不适合公开的信息发到本站，包括但不限于真实姓名与住址、身份证件、手机号、他人的隐私。\\n\\n## 三、禁止发布的内容\\n\\n- 违反任何适用法律法规的内容；\\n- 色情、低俗、暴力、恐怖、赌博、毒品相关内容；\\n- 人肉搜索、恶意曝光他人隐私、骚扰、辱骂、威胁、恐吓；\\n- 诈骗、传销、虚假宣传、非法集资等违法金融信息；\\n\\n## 四、关于你的信息\\n\\n本站收集的信息很少，仅包括用户名、密码（以不可逆的加盐哈希存储）、你自愿填写的头像与签名档。\\n\\n## 五、其他\\n\\n本协议的解释与适用，以中华人民共和国法律为准。参考 https://zh.wikipedia.org/wiki/Wikipedia:%E9%A6%96%E9%A1%B5 这个页面。\\n\\n---\\n\\n如果你已经完整阅读并理解以上全部内容，并愿意遵守，请点击「同意并继续」。';
 
 window.fetch=async function(url){
   var body={};
   if(url.indexOf('/api/status')>=0) body={setupNeeded:false,user:ME,uploadEnabled:true,maxUploadMb:30,maxAvatarMb:2};
+  // 协议：/api/terms/agree 必须排在 /api/terms 前面，否则会被后者的 indexOf 吞掉
+  else if(url.indexOf('/api/terms/agree')>=0) body={ok:true,version:1};
+  else if(url.indexOf('/api/terms')>=0) body={version:1,text:TERMS_TEXT,updated_at:'2026-09-25 06:00:00'};
   else if(url.indexOf('/api/boards')>=0) body={boards:BOARDS,unboarded:1};
   else if(/\\/api\\/threads\\/\\d+$/.test(url)) body=THREAD_DETAIL;
   else if(url.indexOf('/api/threads')>=0) body={items:THREADS,total:4,page:1,pages:1,limit:20};
@@ -124,6 +139,9 @@ let MOCK_LIVE = null;
     console.log('⚑ 检测到线上真实数据，改用真数据渲染（' + LT.items.length + ' 条主题）');
   }
 }
+// 用真数据渲染时，假数据里的匿名样本根本不在页面上 —— 那两条断言要跳过，
+// 不然会变成「明明渲染正常却报红」的噪声（线上一个匿名帖都还没有的时候必然触发）。
+const HAS_LIVE = !!MOCK_LIVE;
 
 /* ---------- 3. 视图驱动 ---------- */
 const VIEWS = {
@@ -155,6 +173,22 @@ const VIEWS = {
     if(ins[1]) ins[1].value='烤肉';
     return 1;
   })()`,
+  // 匿名回复：滚到匿名那一楼 —— 空白头像、点不动的「匿名用户」、引用匿名内容的卡片，
+  // 三样都得亲眼看一眼（首屏截图停在主楼，看不到它）。
+  anonReply:`(function(){
+    openThread(3);
+    // 连滚几次：回复是一条条渲染（带入场动画）的，页面高度在变，
+    // 只滚一次会被后面补上来的内容把位置顶回去。
+    var n=0,t=setInterval(function(){
+      var el=document.querySelector('#app .post .anonName')||document.querySelector('#app .avaAnon');
+      if(el) window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 120);
+      if(++n>=6) clearInterval(t);
+    },55);
+    return 1;
+  })()`,
+  // 用户协议墙：站主每改一次协议，所有人下次进来看到的都是这一屏 ——
+  // 它是「关不掉」的模态，正文与两颗按钮的相对位置得亲眼看一眼
+  terms:    'termsWall()',
   menu:     "document.querySelector('#userBtn').onclick()",   // 顶栏用户下拉（退出登录那颗按钮就在里面）
   // 左上角导航抽屉：板块 + 外观都收在这里，得亲眼看一眼滑出后的排版
   nav:      'openNav()',
@@ -170,9 +204,11 @@ const VIEWS = {
   })()`,
 };
 // 打开弹窗的那些视图：手机上应该变成底部抽屉
-const DIALOG_VIEWS = new Set(['post', 'settings', 'store', 'repost', 'trash', 'duress', 'poll']);
+const DIALOG_VIEWS = new Set(['post', 'settings', 'store', 'repost', 'trash', 'duress', 'poll', 'terms']);
 // 详情类视图：手机上应该把首页的 hero / 板块栏收起来，让正文尽早出现
-const DETAIL_VIEWS = new Set(['thread', 'user', 'admin']);
+const DETAIL_VIEWS = new Set(['thread', 'user', 'admin', 'anonReply']);
+// 这三个视图的假数据里带了匿名样本（主题 + 回复 + 引用卡），顺手断言匿名渲染
+const ANON_VIEWS = new Set(['list', 'thread', 'anonReply']);
 
 // fetch 桩必须插在 app.js **之前** —— app.js 一加载完就调 init()，
 // 放在它后面第一次请求还是打到真 fetch 上，直接 Failed to fetch。
@@ -358,7 +394,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         const navN=drawer?drawer.querySelectorAll('.navItem').length:0;
         const navSeg=drawer?drawer.querySelectorAll('#navThemeSeg .segBtn').length:0;
         const navOnScreen=!!(drawerRect && drawerRect.left>=-1 && drawerRect.width>=180);
+        /* 匿名内容：头像必须是**空白**圆（.avaAnon），作者名必须是**不可点**的（.anonName）。
+           另外全局盯一遍「点了会去查用户 0 号」的链接 —— 那种链接点下去必然 404。 */
+        const anonAva=document.querySelectorAll('.avaAnon').length;
+        const anonName=document.querySelectorAll('.anonName').length;
+        const anonBadLink=document.querySelectorAll('[onclick*="openUser(0"]').length;
         return JSON.stringify({vw:d.clientWidth,sw:d.scrollWidth,
+          sy:Math.round(window.scrollY), sh:Math.round(document.documentElement.scrollHeight),
+          anonAva:anonAva, anonName:anonName, anonBadLink:anonBadLink,
           err:(err&&/加载失败/.test(err.textContent))?err.textContent.slice(0,60):'',
           mdbar: mb?mb.children.length:-1, sheet:sheet, heroHidden:heroHidden,
           collapsed:collapsed, hasReply:!!rf, ups:ups, adminSearch:adminSearch, sticky:sticky,
@@ -386,7 +429,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       // 工具栏按钮要写中文
       const cn = ['加粗', '斜体', '删除线', '标题', '引用', '代码', '代码块', '链接', '列表', '编号', '分隔线', '图片', '预览'];
       const badFace = !cn.every(t => info.faces.some(f => f.indexOf(t) >= 0));
-      const ok = !overflow && !info.err && !noBar && !badSheet && !badHero && !badReply && !badFace && !badUps && !badAdminSearch && !badDrawer && !badStrayDrawer && !badSticky;
+      // 列表页与详情页必然含匿名样本：空白头像 + 不可点作者名，一个都不能少
+      const badAnon = !HAS_LIVE && ANON_VIEWS.has(v) && !(info.anonAva > 0 && info.anonName > 0);
+      // 任何视图里都不该出现 openUser(0) —— 那说明匿名身份漏出去了
+      const badAnonLink = info.anonBadLink > 0;
+      const ok = !overflow && !info.err && !noBar && !badSheet && !badHero && !badReply && !badFace && !badUps && !badAdminSearch && !badDrawer && !badStrayDrawer && !badSticky && !badAnon && !badAnonLink;
       if (!ok) fails++;
 
       // 手机档只拍视口：手机本来就是「一屏一屏」看的，整页长图反而看不出真实观感。
@@ -411,6 +458,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         (badReply ? '  ⚠ 回复框折叠状态不对' : '') +
         (badDrawer ? `  ⚠ 导航抽屉状态不对：open=${info.drawerOpen} 在屏内=${info.navOnScreen} 板块条目=${info.navN} 深浅档=${info.navSeg}` : '') +
         (badStrayDrawer ? '  ⚠ 抽屉没关，浮层留在页面上' : '') +
+        (badAnon ? `  ⚠ 匿名渲染不对：空白头像 ${info.anonAva} 个、不可点作者名 ${info.anonName} 个` : '') +
+        (badAnonLink ? `  ⚠ 有 ${info.anonBadLink} 处链接指向用户 0 号（匿名身份漏了）` : '') +
+        (info.anonAva ? `  匿名 ${info.anonAva} 处` : '') +
+        (v === 'anonReply' ? `  scrollY ${info.sy}/${info.sh}` : '') +
         (badSticky ? `  ⚠ 吸底按钮下方漏出内容（${info.sticky}）` : '') +
         (info.sticky === 'ok' ? '  吸底按钮已盖严' : '') +
         `  → ${path.relative(root, out)}`);

@@ -82,6 +82,16 @@ dialog>.dlgBody{max-height:none;overflow:visible}
       <p>泡了杯茶，随手翻了翻旧相册。</p>
       <div class="meta"><span>小铃</span><span>2026年9月19日 09:12</span><span>0 回复</span></div>
     </article>
+    <!-- 匿名内容：空白头像 + 不可点的「匿名用户」。名字这一格不能压暗，
+         它是「谁在说话」那一栏里唯一的字（压暗了就是可读性事故）。 -->
+    <article class="thread">
+      <div class="threadTop"><span class="tag board">闲聊</span></div>
+      <h3>一条匿名帖</h3>
+      <p>匿名发出来的内容也要读得清。</p>
+      <div class="meta"><span class="avaLink avaAnonLink"><span class="ava avaMini avaAnon"></span></span><span class="linkName anonName">匿名用户</span><span>2026年9月19日 10:00</span><span>0 回复</span></div>
+      <!-- 敏感帖里的投票摘要要一起糊掉（以前这里是明文漏出来的） -->
+      <div class="pollMini blurLock"><svg class="pollIco" viewBox="0 0 24 24"><path d="M4 20.5h4.2V11H4z"/></svg><b>凶手是不是他？</b><span class="muted">3 人参与 · 单选</span><span class="pollMiniGo">去投票 →</span></div>
+    </article>
   </div>
 
   <div class="view">
@@ -142,6 +152,10 @@ dialog>.dlgBody{max-height:none;overflow:visible}
         </div>
         <div class="postActions"><button class="mini">回复</button><button class="mini danger">删除</button></div>
       </article>
+      <article class="post">
+        <div class="postHead"><span class="avaLink avaAnonLink"><span class="ava avaAnon"></span></span><div class="postWho"><b class="linkName anonName">匿名用户</b><small>#2 · 2026年9月20日 19:20</small></div></div>
+        <div class="postBody">匿名回复：头像留空、名字不可点。</div>
+      </article>
       <article class="post nested" style="--depth:1">
         <div class="replyTo">正在回复 #1 <button class="mini" type="button">取消</button></div>
         <div class="postBody">补上媒体与禁用态。视频、音频、加载中、加载失败四种都要能看清占位样式。</div>
@@ -164,6 +178,7 @@ dialog>.dlgBody{max-height:none;overflow:visible}
       <div class="progress"><i style="width:40%"></i></div>
       <div class="upRow"><span class="upTip muted">正在上传 2/3 · 46%</span><button class="mini" type="button">取消</button></div>
       <div class="upRow"><span class="upTip muted">正在保存到存储…（2/3）</span><button class="mini" type="button">取消</button></div>
+      <label class="checkRow slim"><input type="checkbox" checked> 匿名回复（不记录发布者，发出后无法自行修改或删除）</label>
       <textarea placeholder="这条主题已被锁定，无法回复" disabled></textarea>
       <input placeholder="禁用的输入框也要读得出占位文字" disabled>
       <div class="rowActions end"><span class="muted">已恢复上次未发送的草稿</span><button class="primary">回复</button></div>
@@ -338,6 +353,9 @@ dialog>.dlgBody{max-height:none;overflow:visible}
     </div>
     <label class="checkRow"><input type="checkbox" id="postSensitive"> 标记为「不易展示」（剧透 / 公共场合不宜）</label>
     <p class="muted">勾上之后，开了「内容限制」的人会先看到一层模糊，需要滑动确认才能读完整内容。</p>
+    <label class="checkRow"><input type="checkbox" id="postAnon"> 匿名发布</label>
+    <p class="muted">作者会显示成「匿名用户」，头像留空。匿名内容<b>不记录发布者</b>，所以发出之后连你自己也改不了、删不了 ——
+      要删只能请站主处理。回复匿名内容的人仍然看得到自己写的内容。</p>
     <button class="primary wide">发布</button>
   </form>
 </dialog>
@@ -356,6 +374,13 @@ dialog>.dlgBody{max-height:none;overflow:visible}
       <p class="muted">被作者或管理员标记为「不易展示」的内容（剧透、公共场合不宜）会先模糊掉，滑动确认之后才显示完整内容。</p>
       <label class="checkRow"><input type="checkbox" id="sensitiveFilter" onchange="saveSensitiveFilter(this.checked)"> 对这类内容先模糊</label>
       <p class="muted">这颗开关只影响你自己看到的画面，不会改动别人的帖子；关掉后这类内容就和普通帖子一样直接显示。</p>
+    </section>
+
+    <section class="setCard">
+      <h3>用户协议</h3>
+      <p class="muted" id="termsState">状态读取中…</p>
+      <p class="muted">站主每次更新协议，版本号都会 +1，届时所有人进入本站都需要重新确认一次。</p>
+      <button class="ghost wide" type="button" onclick="openTermsView()">查看协议全文</button>
     </section>
 
     <section class="setCard">
@@ -575,6 +600,7 @@ dialog>.dlgBody{max-height:none;overflow:visible}
     <label>标题<input id="repostTitle" maxlength="100" placeholder="留空就用「转帖：原标题」"></label>
     <label>板块<select id="repostBoard"><option value="">未分类</option></select></label>
     <label class="checkRow"><input type="checkbox" id="repostSensitive"> 同时标记为「不易展示」（剧透 / 公共场合不宜）</label>
+    <label class="checkRow"><input type="checkbox" id="repostAnon"> 匿名转帖（不记录发布者，发出后无法自行修改或删除）</label>
     <p class="muted" id="repostHint">转自原帖的内容如果本身带限制标记，这里默认会跟着勾上 —— 免得被引用的一段剧透直接露在外面。</p>
     <button class="primary wide">转帖</button>
   </form>
@@ -620,6 +646,56 @@ dialog>.dlgBody{max-height:none;overflow:visible}
     <p class="muted">这个账号发出的所有内容（主题、回复、图片）都完整保留着，一条都没有被删除。</p>
     <p class="muted">如果这不是你的本意，请联系站主。</p>
     <button class="primary wide" type="button" onclick="duressNotice.close()">我知道了</button>
+  </div>
+</dialog>
+<dialog id="termsDialog" class="termsDlg" aria-labelledby="termsDlgTitle">
+  <div class="dialogHead">
+    <h2 id="termsDlgTitle">用户协议</h2>
+    <span class="termsVer" id="termsDlgVer"></span>
+  </div>
+  <div class="dlgBody">
+    <p class="muted">开始使用之前，请先读完下面的条款。点「同意并继续」表示你已阅读、理解并接受全部内容；不同意请离开本站。</p>
+    <div class="termsBody" id="termsDlgBody">读取中…</div>
+    <p class="termsFoot" id="termsDlgFoot"></p>
+    <div class="termsActions">
+      <button class="primary" type="button" id="termsAgreeBtn" onclick="agreeTerms()">我已阅读，同意并继续</button>
+      <button class="ghost" type="button" id="termsDeclineBtn" onclick="declineTerms()">不同意，离开本站</button>
+    </div>
+  </div>
+</dialog>
+<dialog id="termsViewDialog">
+  <div class="dialogHead"><h2>用户协议</h2><button class="x" type="button" onclick="termsViewDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody">
+    <p class="muted" id="termsViewVer">读取中…</p>
+    <div class="termsBody" id="termsViewBody">读取中…</div>
+    <button class="ghost wide" type="button" onclick="termsViewDialog.close()">关闭</button>
+  </div>
+</dialog>
+<dialog id="termsAdminDialog">
+  <div class="dialogHead"><h2>用户协议</h2><button class="x" type="button" onclick="termsAdminDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody">
+    <section class="setCard">
+      <h3>协议正文</h3>
+      <p class="muted" id="termsAdminVer">读取中…</p>
+      <label>正文（支持 Markdown：# 标题、**加粗**、- 列表）<textarea id="termsText" rows="12" maxlength="20000" placeholder="在这里写你的用户协议……"></textarea></label>
+      <label class="checkRow"><input type="checkbox" id="termsBump" checked> 保存后要求所有人重新确认（版本 +1）</label>
+      <p class="muted">勾上（默认）时版本号 +1，<b>所有用户下次进入都要重新同意</b>；取消勾选只改文字，已经签过的人不会被打断 —— 修个错别字时用得上。</p>
+      <div class="hrRow">
+        <button class="mini primary" type="button" id="termsSaveBtn" onclick="saveTerms()">保存协议</button>
+        <button class="mini" type="button" onclick="restoreTermsDefault()">还原默认文案</button>
+      </div>
+      <p class="muted" id="termsAdminMsg"></p>
+    </section>
+    <section class="setCard">
+      <h3>确认情况</h3>
+      <p class="muted" id="termsStats">读取中…</p>
+      <div id="termsPending"></div>
+    </section>
+    <section class="setCard">
+      <h3>效果预览</h3>
+      <p class="muted">这里看到的就是用户读到的样子。</p>
+      <div class="termsBody" id="termsPreview"></div>
+    </section>
   </div>
 </dialog>
 

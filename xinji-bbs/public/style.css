@@ -426,6 +426,13 @@ input:disabled,textarea:disabled,select:disabled{background:var(--surface-3);col
 .row>*{min-width:0}
 .row>.rowMain{min-width:0;display:flex;align-items:center;gap:var(--sp-3)}
 .row>.rowText{min-width:0;overflow-wrap:anywhere}
+/* ⚠️ 断行策略必须是**通用**规则，不能只写在 `.row > .rowText` 上。
+   主题管理那一行的结构是 .row > .rowMain > .rowText（外面多套了一层 flex），
+   而 flex item 默认 min-width:auto —— 只给直接子元素加的话这一行的文本
+   完全没有断行策略：一条带长网址的标题会把**整页**横向撑宽
+   （实测 390px 视口被撑到 442px，snapshot 的 admin 视图一直在报这一条）。
+   同一个坑在 .thread p / .meta 上踩过一次，这里补上通用版。 */
+.rowText{min-width:0;overflow-wrap:anywhere}
 .rowActions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;flex:0 0 auto}
 .rowActions .mini{min-width:104px}
 
@@ -515,7 +522,8 @@ input:disabled,textarea:disabled,select:disabled{background:var(--surface-3);col
 .postWho b{font-size:var(--fs-md)}
 .postWho small{color:var(--muted);font-size:var(--fs-xs)}
 .postWho .sig{color:var(--muted);font-size:var(--fs-xs);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(320px,60vw)}
-.linkName{cursor:pointer}
+/* 可点击的标题：本身就是块文本，长网址也得能断（断行策略的理由见上面 .rowText 那条） */
+.linkName{cursor:pointer;overflow-wrap:anywhere}
 .linkName:hover{color:var(--accent2)}
 .postActions{margin-top:var(--sp-3);display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap}
 .replies{display:flex;flex-direction:column;gap:var(--sp-3);margin-top:var(--sp-3)}
@@ -613,6 +621,20 @@ img.att.broken{cursor:pointer}
 .avaLink{display:inline-flex;flex:0 0 auto;cursor:pointer;border-radius:50%;transition:transform .2s var(--ease-out-back)}
 .avaLink:hover{transform:scale(1.08)}
 .avaText{font-weight:800;background:linear-gradient(135deg,var(--tint-1),var(--tint-2));color:var(--text)}
+/* 匿名头像：一个空白圆。
+   刻意不走「用户名首字」那条路 —— 所有匿名帖会一起变成同一个「匿」字色块，
+   读起来像「同一个人发的」，反倒比空白更误导。
+   用虚线描边而不是实心底：一眼看出是「没有头像」，而不是「头像图挂了」。
+   描边取 --line-2 而不是 --line：--line 是给分隔线用的，深色模式下
+   它和卡片底色只差 1.3:1，那颗圆在暗底上基本等于不存在（截图实测）。 */
+.avaAnon{background:transparent;border:1.5px dashed var(--line-2)}
+.avaAnonLink{cursor:default}
+/* 有 :hover 的地方要一起压掉：匿名名不可点，悬停变色等于骗人点一下 */
+.avaAnonLink:hover{transform:none}
+/* 匿名作者名：不可点，所以不给悬停高亮，也不用 --muted 压暗 ——
+   它是「谁在说话」这一栏里唯一的字，压暗了就是可读性事故。 */
+.anonName{cursor:default}
+.anonName:hover{color:inherit}
 .avaRow{display:flex;gap:var(--sp-4);align-items:flex-start;flex-wrap:wrap;margin-top:var(--sp-2)}
 .avaPickWrap{flex:1 1 auto;min-width:0}
 .avaPicker{display:grid;grid-template-columns:repeat(auto-fill,minmax(36px,1fr));gap:6px}
@@ -997,6 +1019,55 @@ dialog::backdrop{background:rgba(16,24,39,.45);backdrop-filter:blur(3px);-webkit
 .secretRow code{flex:1;min-width:0;background:var(--surface-2);border:1px dashed var(--line);border-radius:var(--r-sm);
   padding:9px 11px;font-size:var(--fs-xs);word-break:break-all;letter-spacing:.06em;color:var(--text)}
 
+/* ---- 用户协议（0012）----
+   正文区是一个**独立**的滚动容器，弹窗本身不滚 —— 两颗按钮（同意 / 不同意）
+   始终钉在底部看得见，人不必先滚到「看不见按钮」的地方才能表态。
+   协议每次更新全站都要重新过一遍，这个框会被反复看到，排版值得讲究。
+   ⚠️ 装文本的容器一律要给断行策略（overflow-wrap:anywhere），
+      协议是站主写的，但站主也可能贴一条长网址进来。 */
+.termsDlg{width:min(640px,calc(100% - 24px))}
+.termsDlg .dlgBody{overflow:auto}
+/* flex:1 让正文吃掉剩余高度；min-height 兜住横屏那三百多像素的极端情况，
+   压不出来时退回「整个 dlgBody 一起滚」 */
+.termsDlg .termsBody{flex:1 1 auto;min-height:120px;max-height:none}
+.termsVer{color:var(--muted);font-size:var(--fs-xs);font-weight:700;white-space:nowrap}
+
+.termsBody{
+  max-height:min(46vh,420px);overflow:auto;overscroll-behavior:contain;
+  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-md);
+  padding:var(--sp-4);font-size:var(--fs-md);line-height:1.75;color:var(--text);
+  overflow-wrap:anywhere;
+}
+.termsBody>:first-child{margin-top:0}
+.termsBody>:last-child{margin-bottom:0}
+.termsBody h1,.termsBody h2,.termsBody h3,.termsBody h4,.termsBody h5,.termsBody h6{
+  margin:var(--sp-4) 0 var(--sp-2);font-size:var(--fs-lg);overflow-wrap:anywhere}
+.termsBody h3,.termsBody h4,.termsBody h5,.termsBody h6{font-size:var(--fs-md)}
+/* 预览区嵌在 .setCard 里，会继承「标题前一条小竖线」那条装饰 —— 这里去掉，
+   预览看到的就是用户看到的样子 */
+.termsBody h1::before,.termsBody h2::before,.termsBody h3::before,.termsBody h4::before{content:none}
+.termsBody p{margin:0 0 var(--sp-2)}
+.termsBody ul,.termsBody ol{margin:0 0 var(--sp-2);padding-left:1.35em}
+.termsBody li{margin:2px 0}
+.termsBody blockquote{margin:0 0 var(--sp-2);padding:var(--sp-2) var(--sp-3);
+  border-left:3px solid var(--line-2);background:var(--card-solid);color:var(--muted);border-radius:var(--r-sm)}
+.termsBody code{background:var(--surface-3);border-radius:var(--r-xs);padding:1px 5px;font-size:var(--fs-xs)}
+.termsBody hr{border:0;border-top:1px solid var(--line);margin:var(--sp-3) 0}
+.termsBody a{color:var(--accent2);font-weight:700}
+.termsBody strong{color:var(--text)}
+.termsBody table{border-collapse:collapse;width:100%;font-size:var(--fs-sm)}
+
+.termsFoot{margin:0;color:var(--muted);font-size:var(--fs-xs)}
+/* 两颗按钮：同意（主色）与不同意（次要）。不写 flex:1 ——
+   折行时拉伸的那颗会横贯整行；手机上统一铺满，一行一颗，不会点串。 */
+.termsActions{display:flex;gap:var(--sp-2);flex-wrap:wrap;flex:0 0 auto}
+.termsActions button{flex:0 0 auto;white-space:nowrap}
+/* 站主编辑器里的正文框：等宽字体方便对齐 Markdown 标记。
+   刻意**不设** font-size —— 全站输入框都继承 body 字号，单独给这一个设小字号
+   会让 iOS 聚焦时自动放大页面（compat-check F7 盯的就是这个）。 */
+#termsAdminDialog textarea{min-height:200px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;line-height:1.6}
+#termsPending .row{margin-top:var(--sp-1)}
+
 /* Toast：必须是**顶层**图层。
    普通 z-index 打不过 dialog —— <dialog> 打开时整个元素连同 ::backdrop 都在 top layer，
    那里 z-index 是无效的。所以 toast 用 popover 属性，自己进 top layer，
@@ -1244,6 +1315,12 @@ body.navOpen{position:fixed;left:0;right:0;width:100%;overflow:hidden}
   dialog[open]::before{content:'';display:block;width:38px;height:4px;border-radius:var(--r-pill);
     background:var(--line-2);margin:var(--sp-2) auto 0;flex:0 0 auto}
   .dialogHead{padding:var(--sp-3) var(--sp-4) 6px}
+  /* 协议墙在手机上照样铺满宽度（它本来就是一次全屏表态）。
+     必须显式覆盖：上面 dialog 的 width:100% 是元素选择器，
+     打不过 .termsDlg 那条类选择器，不写就会变成「左对齐少 24px」。 */
+  .termsDlg{width:100%;max-width:100%}
+  /* 同意 / 不同意各占一行：拇指点得准，也不会因为折行把某颗挤成小方块 */
+  .termsActions button{width:100%}
   .dlgBody{padding:0 var(--sp-4) calc(var(--sp-4) + env(safe-area-inset-bottom))}
   .postActions{justify-content:flex-end}
   /* 弹窗里的主提交按钮吸底：手机上填完表单不用再滚一段去找「发布」。

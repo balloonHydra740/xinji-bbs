@@ -52,9 +52,21 @@ const newDb = (files) => {
 };
 const mkCaller = (env) => {
   let cookie = '', seq = 0;
+  // 0012 的协议门槛：没签过当前版本的用户连发帖都被 403 挡下。
+  // 真实前端是在注册页上同意过才提交的（body 里带 terms_version），测试照做。
+  const termsVersion = () => {
+    try {
+      const row = env.DB.db.prepare(`SELECT value FROM settings WHERE key='terms_version'`).get();
+      const n = Number(row && row.value);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
+    } catch (e) { return 1; }
+  };
   return async (p, o = {}) => {
     const h = { 'content-type': 'application/json', ...(o.headers || {}) };
     if (!h['cf-connecting-ip'] && p === '/api/register') h['cf-connecting-ip'] = `198.51.100.${(seq++ % 250) + 1}`;
+    if (p === '/api/register' && o.body && typeof o.body === 'object' && !('terms_version' in o.body)) {
+      o = { ...o, body: { ...o.body, terms_version: termsVersion() } };
+    }
     if (cookie) h['Cookie'] = cookie;
     const req = new Request('http://localhost' + p, { method: o.method || 'GET', body: o.body ? JSON.stringify(o.body) : undefined, headers: h });
     const res = await env.__worker.fetch(req, env, {});

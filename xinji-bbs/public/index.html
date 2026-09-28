@@ -127,6 +127,9 @@ try{
     </div>
     <label class="checkRow"><input type="checkbox" id="postSensitive"> 标记为「不易展示」（剧透 / 公共场合不宜）</label>
     <p class="muted">勾上之后，开了「内容限制」的人会先看到一层模糊，需要滑动确认才能读完整内容。</p>
+    <label class="checkRow"><input type="checkbox" id="postAnon"> 匿名发布</label>
+    <p class="muted">作者会显示成「匿名用户」，头像留空。匿名内容<b>不记录发布者</b>，所以发出之后连你自己也改不了、删不了 ——
+      要删只能请站主处理。回复匿名内容的人仍然看得到自己写的内容。</p>
     <button class="primary wide">发布</button>
   </form>
 </dialog>
@@ -146,6 +149,13 @@ try{
       <p class="muted">被作者或管理员标记为「不易展示」的内容（剧透、公共场合不宜）会先模糊掉，滑动确认之后才显示完整内容。</p>
       <label class="checkRow"><input type="checkbox" id="sensitiveFilter" onchange="saveSensitiveFilter(this.checked)"> 对这类内容先模糊</label>
       <p class="muted">这颗开关只影响你自己看到的画面，不会改动别人的帖子；关掉后这类内容就和普通帖子一样直接显示。</p>
+    </section>
+
+    <section class="setCard">
+      <h3>用户协议</h3>
+      <p class="muted" id="termsState">状态读取中…</p>
+      <p class="muted">站主每次更新协议，版本号都会 +1，届时所有人进入本站都需要重新确认一次。</p>
+      <button class="ghost wide" type="button" onclick="openTermsView()">查看协议全文</button>
     </section>
 
     <section class="setCard">
@@ -371,6 +381,7 @@ try{
     <label>标题<input id="repostTitle" maxlength="100" placeholder="留空就用「转帖：原标题」"></label>
     <label>板块<select id="repostBoard"><option value="">未分类</option></select></label>
     <label class="checkRow"><input type="checkbox" id="repostSensitive"> 同时标记为「不易展示」（剧透 / 公共场合不宜）</label>
+    <label class="checkRow"><input type="checkbox" id="repostAnon"> 匿名转帖（不记录发布者，发出后无法自行修改或删除）</label>
     <p class="muted" id="repostHint">转自原帖的内容如果本身带限制标记，这里默认会跟着勾上 —— 免得被引用的一段剧透直接露在外面。</p>
     <button class="primary wide">转帖</button>
   </form>
@@ -429,8 +440,67 @@ try{
   </div>
 </dialog>
 
-<div id="toast" popover="manual"></div>
+<!-- ===== 用户协议（0012）=====
+     站主在管理端每改一次协议，版本号 +1，于是**所有人**下次进来都会被这堵墙接住。
+     墙刻意是「关不掉」的：没有 ×、Esc（cancel 事件）在 JS 里被拦掉、
+     点背板原生不关闭。同意之后才继续加载站内内容；不同意就直接离开。
+     正文由 loadTerms() 懒加载后填进来 —— 正常使用的请求不必白传十几 KB 文本。 -->
+<dialog id="termsDialog" class="termsDlg" aria-labelledby="termsDlgTitle">
+  <div class="dialogHead">
+    <h2 id="termsDlgTitle">用户协议</h2>
+    <span class="termsVer" id="termsDlgVer"></span>
+  </div>
+  <div class="dlgBody">
+    <p class="muted">开始使用之前，请先读完下面的条款。点「同意并继续」表示你已阅读、理解并接受全部内容；不同意请离开本站。</p>
+    <div class="termsBody" id="termsDlgBody">读取中…</div>
+    <p class="termsFoot" id="termsDlgFoot"></p>
+    <div class="termsActions">
+      <button class="primary" type="button" id="termsAgreeBtn" onclick="agreeTerms()">我已阅读，同意并继续</button>
+      <button class="ghost" type="button" id="termsDeclineBtn" onclick="declineTerms()">不同意，离开本站</button>
+    </div>
+  </div>
+</dialog>
 
+<!-- 只读查看（任何登录用户都能看自己已经签过的是什么） -->
+<dialog id="termsViewDialog">
+  <div class="dialogHead"><h2>用户协议</h2><button class="x" type="button" onclick="termsViewDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody">
+    <p class="muted" id="termsViewVer">读取中…</p>
+    <div class="termsBody" id="termsViewBody">读取中…</div>
+    <button class="ghost wide" type="button" onclick="termsViewDialog.close()">关闭</button>
+  </div>
+</dialog>
+
+<!-- 站主编辑：改正文 + 看谁还没签。改协议是对全站立规矩，所以只有站主能开。 -->
+<dialog id="termsAdminDialog">
+  <div class="dialogHead"><h2>用户协议</h2><button class="x" type="button" onclick="termsAdminDialog.close()" aria-label="关闭">×</button></div>
+  <div class="dlgBody">
+    <section class="setCard">
+      <h3>协议正文</h3>
+      <p class="muted" id="termsAdminVer">读取中…</p>
+      <label>正文（支持 Markdown：# 标题、**加粗**、- 列表）<textarea id="termsText" rows="12" maxlength="20000" placeholder="在这里写你的用户协议……"></textarea></label>
+      <label class="checkRow"><input type="checkbox" id="termsBump" checked> 保存后要求所有人重新确认（版本 +1）</label>
+      <p class="muted">勾上（默认）时版本号 +1，<b>所有用户下次进入都要重新同意</b>；取消勾选只改文字，已经签过的人不会被打断 —— 修个错别字时用得上。</p>
+      <div class="hrRow">
+        <button class="mini primary" type="button" id="termsSaveBtn" onclick="saveTerms()">保存协议</button>
+        <button class="mini" type="button" onclick="restoreTermsDefault()">还原默认文案</button>
+      </div>
+      <p class="muted" id="termsAdminMsg"></p>
+    </section>
+    <section class="setCard">
+      <h3>确认情况</h3>
+      <p class="muted" id="termsStats">读取中…</p>
+      <div id="termsPending"></div>
+    </section>
+    <section class="setCard">
+      <h3>效果预览</h3>
+      <p class="muted">这里看到的就是用户读到的样子。</p>
+      <div class="termsBody" id="termsPreview"></div>
+    </section>
+  </div>
+</dialog>
+
+<div id="toast" popover="manual"></div>
 <script src="/vendor/qrcode.min.js"></script>
 <script src="/md.js"></script>
 <script src="/app.js"></script>

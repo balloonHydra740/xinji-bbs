@@ -1,0 +1,21 @@
+-- 0012 用户协议（服务条款）：同意记录 + 版本号
+--
+-- 【无损】
+--   只给 users 加两个带 DEFAULT 的新列，不改任何已应用的迁移、不删列、不动数据。
+--   老库补齐后 terms_version=0，而当前版本从 1 起算 —— 于是**所有人第一次进来都会被要求重新同意**，
+--   这正是想要的（协议是新东西，不能默认替谁签过）。
+--
+-- 【⚠️ 必须排在 widenRoleConstraint 之后】
+--   widen 会用写死的建表语句重建 users/threads/posts/... 再从 snap_* 回填。
+--   若在它之前给 users 加列，`INSERT INTO users SELECT * FROM snap_users` 会因为
+--   两边列数不等直接报错、整批回滚 —— 角色约束就永远放宽不了（0007 / 0008 踩过同一个坑）。
+--   所以对应的 ensureTerms() 挂在 ensurePolls() 之后、createRoleGuards() 之前。
+--
+-- 【协议正文为什么不建表】
+--   正文与版本号都是「一份站点级配置」，跟 storage_config 同类，放 settings 表即可：
+--     terms_text        协议正文（Markdown，站主可改）
+--     terms_version     版本号，单调递增；站主每次「保存并要求重新确认」就 +1
+--     terms_updated_at  最后修改时间（ISO 字符串）
+--   用户侧只存「我同意到哪一版」：terms_version < 当前版本 ⇒ 弹协议墙。
+ALTER TABLE users ADD COLUMN terms_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN terms_at TEXT;

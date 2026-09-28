@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node --no-warnings tests/e2e.cjs && node tests/sensitive-check.cjs && node tests/reaction-check.cjs && node tests/moderate-check.cjs && node tests/poll-check.cjs && node tests/att-check.cjs && node tests/ui-check.cjs && node tests/panel-check.cjs && node tests/contrast-check.cjs && node tests/layout-check.cjs && node tests/safari-check.cjs && node tests/compat-check.cjs",
+    "test": "node --no-warnings tests/e2e.cjs && node tests/sensitive-check.cjs && node tests/reaction-check.cjs && node tests/moderate-check.cjs && node tests/poll-check.cjs && node tests/terms-check.cjs && node tests/att-check.cjs && node tests/anon-check.cjs && node tests/ui-check.cjs && node tests/panel-check.cjs && node tests/contrast-check.cjs && node tests/layout-check.cjs && node tests/safari-check.cjs && node tests/compat-check.cjs",
+    "test:anon": "node --no-warnings tests/anon-check.cjs",
+    "test:mutate": "node --no-warnings tests/_mutate-anon.cjs",
     "test:ui": "node tests/contrast-check.cjs --all && node tests/layout-check.cjs --shot && node tests/snapshot.cjs && node tests/nav-check.cjs && node tests/viewport-check.cjs",
     "test:shot": "node tests/snapshot.cjs",
     "test:nav": "node tests/nav-check.cjs",

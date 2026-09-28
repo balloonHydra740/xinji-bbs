@@ -50,6 +50,9 @@ const VIEWS = {
   post: "document.querySelector('#newBtn').onclick()",
   admin: "document.querySelector('#adminBtn').onclick()",
   trash: 'openTrash()',
+  // 用户协议墙：七种比例下都不能横向溢出，更不能把「同意 / 不同意」挤出视口 ——
+  // 它是一堵关不掉的墙，按钮被顶掉就等于整站进不去
+  terms: 'termsWall()',
   nav: 'openNav()',
   // 投票编辑器：七种比例下都要既不横向溢出、也不被压成一行一个字
   poll: `(function(){

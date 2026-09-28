@@ -209,7 +209,10 @@ console.log('\n--- 长内容与布局韧性 ---');
   // 会装「用户文本 / 远端返回文本」的容器必须能断行
   // 投票里的问题、选项、结果标签、说明全是用户写的字，一并纳入
   const NEEDS_WRAP = ['.thread p', '.postBody', '.muted,.hint', '.toastMsg', '.meta', '.trashTitle', '.qText',
-    '.pollHead b', '.pollOptTxt', '.pollResLabel', '.pollFoot', '.pollMini b', '.pollChipHead b'];
+    '.pollHead b', '.pollOptTxt', '.pollResLabel', '.pollFoot', '.pollMini b', '.pollChipHead b',
+    // 管理行里的文本：主题管理那一行是 .row > .rowMain > .rowText，
+    // 只给直接子元素加断行策略会漏掉它 —— 一条带长网址的标题能把整页撑宽
+    '.rowText', '.linkName', '.termsBody'];
   const noWrap = NEEDS_WRAP.filter(sel => {
     // 精确到「类名后面紧跟 { 或 ,」——否则 .postBody 会匹配到 .postBody .att 那一条，
     // .muted,.hint 这种多选择器写法又会匹配不到
